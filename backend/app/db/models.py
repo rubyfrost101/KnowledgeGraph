@@ -57,6 +57,7 @@ class KnowledgeNodeORM(Base):
     detail: Mapped[str] = mapped_column(Text, nullable=False)
     aliases: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     sources: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    reference_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     score: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

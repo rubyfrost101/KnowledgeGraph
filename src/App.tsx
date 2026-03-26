@@ -183,15 +183,29 @@ type GlossaryTreeNode = {
   items: KnowledgeNode[];
 };
 
-function buildGlossaryTree(graph: KnowledgeGraphData): { roots: GlossaryTreeNode[]; orphans: KnowledgeNode[] } {
+type GlossaryTreeIndex = {
+  roots: GlossaryTreeNode[];
+  orphans: KnowledgeNode[];
+  nodesById: Map<string, KnowledgeNode>;
+  sectionParentById: Map<string, string>;
+  sectionChildrenById: Map<string, Set<string>>;
+  itemsBySectionId: Map<string, Set<string>>;
+  itemParentById: Map<string, string>;
+};
+
+function buildGlossaryTree(graph: KnowledgeGraphData): GlossaryTreeIndex {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
   const sectionParentById = new Map<string, string>();
   const sectionChildrenById = new Map<string, Set<string>>();
   const itemsBySectionId = new Map<string, Set<string>>();
+  const itemParentById = new Map<string, string>();
   const attachedItemIds = new Set<string>();
 
   for (const edge of graph.edges) {
     if (edge.kind !== 'part-of') {
+      continue;
+    }
+    if (edge.source === edge.target) {
       continue;
     }
     const source = nodesById.get(edge.source);
@@ -200,46 +214,43 @@ function buildGlossaryTree(graph: KnowledgeGraphData): { roots: GlossaryTreeNode
       continue;
     }
     if (isSectionNode(source) && isSectionNode(target)) {
-      sectionParentById.set(source.id, target.id);
-      const children = sectionChildrenById.get(target.id) ?? new Set<string>();
-      children.add(source.id);
-      sectionChildrenById.set(target.id, children);
+      if (!sectionParentById.has(source.id)) {
+        sectionParentById.set(source.id, target.id);
+        const children = sectionChildrenById.get(target.id) ?? new Set<string>();
+        children.add(source.id);
+        sectionChildrenById.set(target.id, children);
+      }
       continue;
     }
     if (!isSectionNode(source) && isSectionNode(target)) {
-      const items = itemsBySectionId.get(target.id) ?? new Set<string>();
-      items.add(source.id);
-      itemsBySectionId.set(target.id, items);
-      attachedItemIds.add(source.id);
+      if (!itemParentById.has(source.id)) {
+        const items = itemsBySectionId.get(target.id) ?? new Set<string>();
+        items.add(source.id);
+        itemsBySectionId.set(target.id, items);
+        itemParentById.set(source.id, target.id);
+        attachedItemIds.add(source.id);
+      }
     }
   }
 
-  const sectionDepthCache = new Map<string, number>();
-  const depthOf = (sectionId: string): number => {
-    const cached = sectionDepthCache.get(sectionId);
-    if (cached !== undefined) {
-      return cached;
+  const buildNode = (sectionId: string, path: Set<string> = new Set()): GlossaryTreeNode | null => {
+    if (path.has(sectionId)) {
+      return null;
     }
-    const parentId = sectionParentById.get(sectionId);
-    const depth = parentId ? depthOf(parentId) + 1 : 0;
-    sectionDepthCache.set(sectionId, depth);
-    return depth;
-  };
-  for (const section of graph.nodes.filter(isSectionNode)) {
-    depthOf(section.id);
-  }
-
-  const buildNode = (sectionId: string): GlossaryTreeNode | null => {
     const node = nodesById.get(sectionId);
     if (!node) {
       return null;
     }
+    const nextPath = new Set(path);
+    nextPath.add(sectionId);
     const childIds = Array.from(sectionChildrenById.get(sectionId) ?? []).sort((left, right) => {
       const leftNode = nodesById.get(left);
       const rightNode = nodesById.get(right);
       return (leftNode?.label ?? left).localeCompare(rightNode?.label ?? right, 'zh-Hans-CN');
     });
-    const children = childIds.map((childId) => buildNode(childId)).filter((child): child is GlossaryTreeNode => child !== null);
+    const children = childIds
+      .map((childId) => buildNode(childId, nextPath))
+      .filter((child): child is GlossaryTreeNode => child !== null);
     const itemIds = Array.from(itemsBySectionId.get(sectionId) ?? []).sort((left, right) => {
       const leftNode = nodesById.get(left);
       const rightNode = nodesById.get(right);
@@ -264,7 +275,25 @@ function buildGlossaryTree(graph: KnowledgeGraphData): { roots: GlossaryTreeNode
   const orphanItems = graph.nodes.filter((node) => !isSectionNode(node) && !attachedItemIds.has(node.id));
   const orphans = orphanItems.filter((node) => node.kind === 'term' || node.kind === 'concept' || node.kind === 'process');
 
-  return { roots, orphans };
+  return { roots, orphans, nodesById, sectionParentById, sectionChildrenById, itemsBySectionId, itemParentById };
+}
+
+function buildGlossaryTrail(
+  nodeId: string,
+  sectionParentById: Map<string, string>,
+  itemParentById: Map<string, string>,
+): string[] {
+  const trail: string[] = [];
+  const seen = new Set<string>();
+  let currentId: string | undefined = nodeId;
+
+  while (currentId && !seen.has(currentId)) {
+    trail.unshift(currentId);
+    seen.add(currentId);
+    currentId = sectionParentById.get(currentId) ?? itemParentById.get(currentId);
+  }
+
+  return trail;
 }
 
 function App() {
@@ -286,7 +315,7 @@ function App() {
   const [deletedDocuments, setDeletedDocuments] = useState<KnowledgeDocument[]>([]);
   const [deletedNodes, setDeletedNodes] = useState<KnowledgeNode[]>([]);
   const [busy, setBusy] = useState(false);
-  const glossaryModel = buildGlossaryTree(graph);
+  const glossaryIndex = buildGlossaryTree(graph);
 
   useEffect(() => {
     const selectedExists = graph.nodes.some((node) => node.id === selectedId);
@@ -305,16 +334,22 @@ function App() {
     if (viewMode !== 'glossary') {
       return;
     }
-    if (glossaryModel.roots.length === 0) {
+    if (glossaryIndex.roots.length === 0) {
       return;
     }
     setExpandedGlossaryIds((current) => {
-      if (current.length > 0) {
-        return current;
+      const next = new Set(current);
+      if (current.length === 0) {
+        for (const root of glossaryIndex.roots) {
+          next.add(root.node.id);
+        }
       }
-      return glossaryModel.roots.map((root) => root.node.id);
+      for (const ancestorId of buildGlossaryTrail(selectedId, glossaryIndex.sectionParentById, glossaryIndex.itemParentById).slice(0, -1)) {
+        next.add(ancestorId);
+      }
+      return Array.from(next);
     });
-  }, [graph, viewMode]);
+  }, [graph, selectedId, viewMode]);
 
   async function syncRemoteCollections() {
     const [remoteGraph, remoteDocuments, remoteNodes, remoteJobs] = await Promise.all([
@@ -375,6 +410,20 @@ function App() {
   const selectedEdges = selectedId ? neighborhood?.relatedEdges ?? [] : [];
   const activeTask = jobs.find((job) => job.status === 'running' || job.status === 'queued') ?? jobs[0] ?? null;
   const recentJobs = jobs.slice(0, 6);
+  const glossaryTrail = selectedId ? buildGlossaryTrail(selectedId, glossaryIndex.sectionParentById, glossaryIndex.itemParentById) : [];
+  const glossarySelectedNode = selectedNode;
+  const glossaryChildSections = selectedId
+    ? Array.from(glossaryIndex.sectionChildrenById.get(selectedId) ?? [])
+        .map((childId) => glossaryIndex.nodesById.get(childId))
+        .filter((node): node is KnowledgeNode => Boolean(node))
+    : [];
+  const glossaryChildItems = selectedId
+    ? Array.from(glossaryIndex.itemsBySectionId.get(selectedId) ?? [])
+        .map((childId) => glossaryIndex.nodesById.get(childId))
+        .filter((node): node is KnowledgeNode => Boolean(node))
+    : [];
+  const detailNode = viewMode === 'glossary' ? glossarySelectedNode : selectedNode;
+  const detailParts = detailNode ? splitDetail(detailNode.detail) : { narrative: '', citations: [] as string[] };
 
   async function importRawText(text: string, origin: string, type: 'text' | 'pdf') {
     const trimmed = text.trim();
@@ -527,6 +576,37 @@ function App() {
     setStatus(`已在术语表中定位到“${node.label}”。`);
   }
 
+  function focusGlossaryReference(referenceId: string) {
+    const target = glossaryIndex.nodesById.get(referenceId);
+    if (target) {
+      focusGlossaryNode(target);
+    }
+  }
+
+  function renderReferenceChips(referenceIds: string[], label = '来源锚点') {
+    const targets = referenceIds
+      .map((referenceId) => glossaryIndex.nodesById.get(referenceId))
+      .filter((node): node is KnowledgeNode => Boolean(node));
+    if (targets.length === 0) {
+      return <span className="muted">{label}：暂无</span>;
+    }
+    return (
+      <div className="anchor-chip-row">
+        {targets.map((target) => (
+          <button
+            key={target.id}
+            className="anchor-chip"
+            type="button"
+            onClick={() => focusGlossaryReference(target.id)}
+          >
+            <span className="anchor-chip-kind">{kindLabel(target.kind)}</span>
+            <strong>{target.label}</strong>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   async function applyDocumentMutation(documentId: string, action: 'delete' | 'restore') {
     setBusy(true);
     try {
@@ -563,8 +643,9 @@ function App() {
   function renderGlossarySection(section: GlossaryTreeNode, depth = 0) {
     const isOpen = depth === 0 || expandedGlossaryIds.includes(section.node.id);
     const detailParts = splitDetail(section.node.detail);
+    const isSelected = selectedId === section.node.id;
     return (
-      <div key={section.node.id} className="glossary-section" data-depth={depth}>
+      <div key={section.node.id} className={`glossary-section ${isSelected ? 'is-selected' : ''}`} data-depth={depth}>
         <button
           className="glossary-section-head"
           type="button"
@@ -589,6 +670,7 @@ function App() {
           <div className="glossary-section-body">
             <div className="glossary-section-summary">
               <p>{detailParts.narrative || section.node.summary}</p>
+              {section.node.referenceIds.length > 0 ? renderReferenceChips(section.node.referenceIds) : null}
             </div>
 
             {section.items.length > 0 ? (
@@ -597,12 +679,15 @@ function App() {
                   const itemParts = splitDetail(item.detail);
                   const evidence = itemParts.citations.length > 0 ? itemParts.citations : [];
                   return (
-                    <button key={item.id} className="glossary-item" type="button" onClick={() => focusGlossaryNode(item)}>
-                      <div className="glossary-item-head">
-                        <strong>{item.label}</strong>
-                        <span>{kindLabel(item.kind)}</span>
-                      </div>
-                      <p>{itemParts.narrative || item.summary}</p>
+                    <article key={item.id} className="glossary-item">
+                      <button className="glossary-item-main" type="button" onClick={() => focusGlossaryNode(item)}>
+                        <div className="glossary-item-head">
+                          <strong>{item.label}</strong>
+                          <span>{kindLabel(item.kind)}</span>
+                        </div>
+                        <p>{itemParts.narrative || item.summary}</p>
+                      </button>
+                      {item.referenceIds.length > 0 ? renderReferenceChips(item.referenceIds) : null}
                       {evidence.length > 0 ? (
                         <div className="glossary-item-citations">
                           {evidence.slice(0, 2).map((citation) => (
@@ -612,7 +697,7 @@ function App() {
                           ))}
                         </div>
                       ) : null}
-                    </button>
+                    </article>
                   );
                 })}
               </div>
@@ -1065,37 +1150,40 @@ function App() {
                     <div>
                       <h3>目录树</h3>
                       <p>
-                        {glossaryModel.roots.length} 个章节根 · {glossaryModel.orphans.length} 条未归类术语
+                        {glossaryIndex.roots.length} 个章节根 · {glossaryIndex.orphans.length} 条未归类术语
                       </p>
                     </div>
                     <button
                       className="ghost-button"
                       type="button"
-                      onClick={() => setExpandedGlossaryIds(glossaryModel.roots.map((root) => root.node.id))}
+                      onClick={() => setExpandedGlossaryIds(glossaryIndex.roots.map((root) => root.node.id))}
                     >
                       展开根目录
                     </button>
                   </div>
                   <div className="glossary-tree-body">
-                    {glossaryModel.roots.length === 0 ? (
+                    {glossaryIndex.roots.length === 0 ? (
                       <p className="muted">暂无可展开的目录树，先导入一本带章节的文档。</p>
                     ) : (
-                      glossaryModel.roots.map((root) => renderGlossarySection(root))
+                      glossaryIndex.roots.map((root) => renderGlossarySection(root))
                     )}
-                    {glossaryModel.orphans.length > 0 ? (
+                    {glossaryIndex.orphans.length > 0 ? (
                       <div className="glossary-orphans">
                         <h4>未归类术语</h4>
                         <div className="glossary-item-grid">
-                          {glossaryModel.orphans.map((item) => {
+                          {glossaryIndex.orphans.map((item) => {
                             const itemParts = splitDetail(item.detail);
                             return (
-                              <button key={item.id} className="glossary-item" type="button" onClick={() => focusGlossaryNode(item)}>
-                                <div className="glossary-item-head">
-                                  <strong>{item.label}</strong>
-                                  <span>{kindLabel(item.kind)}</span>
-                                </div>
-                                <p>{itemParts.narrative || item.summary}</p>
-                              </button>
+                              <article key={item.id} className="glossary-item">
+                                <button className="glossary-item-main" type="button" onClick={() => focusGlossaryNode(item)}>
+                                  <div className="glossary-item-head">
+                                    <strong>{item.label}</strong>
+                                    <span>{kindLabel(item.kind)}</span>
+                                  </div>
+                                  <p>{itemParts.narrative || item.summary}</p>
+                                </button>
+                                {item.referenceIds.length > 0 ? renderReferenceChips(item.referenceIds) : null}
+                              </article>
                             );
                           })}
                         </div>
@@ -1113,71 +1201,177 @@ function App() {
             <div className="card-head">
               <div>
                 <p className="card-kicker">Detail</p>
-                <h2>{selectedNode?.label ?? '知识点详情'}</h2>
+                <h2>{detailNode?.label ?? (viewMode === 'glossary' ? '引用详情' : '知识点详情')}</h2>
               </div>
             </div>
 
-            {selectedNode ? (
+            {detailNode ? (
               <>
                 <div className="pill-row">
-                  <span className="pill">{kindLabel(selectedNode.kind)}</span>
-                  <span className="pill">{selectedNode.category}</span>
-                  <span className="pill">{selectedNode.sources.length} 个来源标记</span>
+                  <span className="pill">{kindLabel(detailNode.kind)}</span>
+                  <span className="pill">{detailNode.category}</span>
+                  <span className="pill">{detailNode.sources.length} 个来源标记</span>
                 </div>
-                <p className="detail-summary">{selectedNode.summary}</p>
-                <p className="detail-body">{selectedNode.detail}</p>
+                <p className="detail-summary">{detailNode.summary}</p>
+                <p className="detail-body">{detailParts.narrative || detailNode.detail}</p>
 
-                <div className="section-block">
-                  <h3>与它相连的知识</h3>
-                  <div className="relation-list">
-                    {relatedNodes.length === 0 ? (
-                      <p className="muted">当前没有可显示的关联节点。</p>
-                    ) : (
-                      relatedNodes.map((node) => {
-                        const edge = selectedEdges.find(
-                          (candidate) =>
-                            (candidate.source === selectedId && candidate.target === node.id) ||
-                            (candidate.target === selectedId && candidate.source === node.id),
-                        );
-                        return (
-                          <button
-                            key={node.id}
-                            type="button"
-                            className="relation-chip"
-                            onClick={() => setSelectedId(node.id)}
-                          >
-                            <strong>{node.label}</strong>
-                            <span>{edge ? relationLabel(edge.kind) : '关联'}</span>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
+                {viewMode === 'glossary' ? (
+                  <>
+                    <div className="section-block">
+                      <h3>目录路径</h3>
+                      {glossaryTrail.length === 0 ? (
+                        <p className="muted">没有找到可追溯的路径。</p>
+                      ) : (
+                        <div className="anchor-chip-row">
+                          {glossaryTrail.map((nodeId) => {
+                            const trailNode = glossaryIndex.nodesById.get(nodeId);
+                            if (!trailNode) {
+                              return null;
+                            }
+                            return (
+                              <button
+                                key={trailNode.id}
+                                type="button"
+                                className="anchor-chip"
+                                onClick={() => focusGlossaryNode(trailNode)}
+                              >
+                                <span className="anchor-chip-kind">{kindLabel(trailNode.kind)}</span>
+                                <strong>{trailNode.label}</strong>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
 
-                <div className="section-block">
-                  <h3>来源</h3>
-                  <ul className="source-list">
-                    {selectedNode.sources.map((source) => (
-                      <li key={source}>{source}</li>
-                    ))}
-                  </ul>
-                </div>
+                    <div className="section-block">
+                      <h3>引用锚点</h3>
+                      {renderReferenceChips(detailNode.referenceIds, '引用锚点')}
+                    </div>
 
-                <div className="section-block">
-                  <h3>操作</h3>
-                  <div className="actions-row">
-                    <button className="ghost-button" type="button" onClick={() => applyNodeMutation('delete')} disabled={busy}>
-                      删除知识点
-                    </button>
-                    <button className="ghost-button" type="button" onClick={() => applyNodeMutation('restore')} disabled={busy}>
-                      恢复知识点
-                    </button>
-                  </div>
-                </div>
+                    <div className="section-block">
+                      <h3>引用原文</h3>
+                      {detailParts.citations.length > 0 ? (
+                        <div className="citation-stack">
+                          {detailParts.citations.map((citation) => (
+                            <div key={citation} className="citation-line">
+                              <span className="citation">{citation}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted">这一条目前没有独立的引用原文。</p>
+                      )}
+                    </div>
+
+                    {glossaryChildSections.length > 0 ? (
+                      <div className="section-block">
+                        <h3>子章节</h3>
+                        <div className="relation-list">
+                          {glossaryChildSections.map((node) => (
+                            <button key={node.id} type="button" className="relation-chip" onClick={() => focusGlossaryNode(node)}>
+                              <strong>{node.label}</strong>
+                              <span>{kindLabel(node.kind)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {glossaryChildItems.length > 0 ? (
+                      <div className="section-block">
+                        <h3>本节术语</h3>
+                        <div className="relation-list">
+                          {glossaryChildItems.map((node) => (
+                            <button key={node.id} type="button" className="relation-chip" onClick={() => focusGlossaryNode(node)}>
+                              <strong>{node.label}</strong>
+                              <span>{kindLabel(node.kind)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="section-block">
+                      <h3>来源文档</h3>
+                      <ul className="source-list">
+                        {detailNode.sources.map((source) => (
+                          <li key={source}>{source}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="section-block">
+                      <h3>操作</h3>
+                      <div className="actions-row">
+                        <button className="ghost-button" type="button" onClick={() => applyNodeMutation('delete')} disabled={busy}>
+                          删除知识点
+                        </button>
+                        <button className="ghost-button" type="button" onClick={() => applyNodeMutation('restore')} disabled={busy}>
+                          恢复知识点
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="section-block">
+                      <h3>与它相连的知识</h3>
+                      <div className="relation-list">
+                        {relatedNodes.length === 0 ? (
+                          <p className="muted">当前没有可显示的关联节点。</p>
+                        ) : (
+                          relatedNodes.map((node) => {
+                            const edge = selectedEdges.find(
+                              (candidate) =>
+                                (candidate.source === selectedId && candidate.target === node.id) ||
+                                (candidate.target === selectedId && candidate.source === node.id),
+                            );
+                            return (
+                              <button
+                                key={node.id}
+                                type="button"
+                                className="relation-chip"
+                                onClick={() => setSelectedId(node.id)}
+                              >
+                                <strong>{node.label}</strong>
+                                <span>{edge ? relationLabel(edge.kind) : '关联'}</span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="section-block">
+                      <h3>来源</h3>
+                      <ul className="source-list">
+                        {detailNode.sources.map((source) => (
+                          <li key={source}>{source}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="section-block">
+                      <h3>操作</h3>
+                      <div className="actions-row">
+                        <button className="ghost-button" type="button" onClick={() => applyNodeMutation('delete')} disabled={busy}>
+                          删除知识点
+                        </button>
+                        <button className="ghost-button" type="button" onClick={() => applyNodeMutation('restore')} disabled={busy}>
+                          恢复知识点
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </>
             ) : (
-              <p className="muted">点击图谱中的节点，右侧会显示详细解释。</p>
+              <p className="muted">
+                {viewMode === 'glossary'
+                  ? '点击左侧目录树里的章节或术语，右侧会显示路径、引用锚点和摘要。'
+                  : '点击图谱中的节点，右侧会显示详细解释。'}
+              </p>
             )}
           </section>
 

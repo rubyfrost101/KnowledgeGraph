@@ -14,6 +14,7 @@ function cloneNode(node: KnowledgeNode): KnowledgeNode {
     ...node,
     aliases: [...node.aliases],
     sources: [...node.sources],
+    referenceIds: [...node.referenceIds],
   };
 }
 
@@ -53,6 +54,7 @@ export function mergeGraphData(
         existing.detail = [existing.detail, node.detail].filter(Boolean).join('\n\n');
         existing.aliases = uniqueList([...existing.aliases, ...node.aliases]);
         existing.sources = uniqueList([...existing.sources, ...node.sources]);
+        existing.referenceIds = uniqueList([...existing.referenceIds, ...node.referenceIds]);
         existing.score = Math.max(existing.score, node.score);
       }
       continue;
@@ -254,6 +256,7 @@ export function createNodeFromHeading(label: string, category: string, sourceId:
     detail,
     aliases: [],
     sources: [sourceId],
+    referenceIds: [],
     score: 1,
   };
 }

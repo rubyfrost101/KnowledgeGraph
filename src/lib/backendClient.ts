@@ -16,6 +16,7 @@ type BackendKnowledgeDocument = {
 };
 
 type BackendKnowledgeNode = KnowledgeNode & {
+  reference_ids?: string[];
   deleted_at?: string | null;
   deleted_reason?: string | null;
 };
@@ -105,6 +106,7 @@ function normalizeDocument(document: BackendKnowledgeDocument): KnowledgeDocumen
 function normalizeNode(node: BackendKnowledgeNode): KnowledgeNode {
   return {
     ...node,
+    referenceIds: node.reference_ids ?? node.referenceIds ?? [],
     deletedAt: node.deleted_at ?? null,
     deletedReason: node.deleted_reason ?? null,
   };

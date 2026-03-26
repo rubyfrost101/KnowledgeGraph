@@ -18,6 +18,7 @@ def _clone_node(node: KnowledgeNode) -> KnowledgeNode:
         detail=node.detail,
         aliases=list(node.aliases),
         sources=list(node.sources),
+        reference_ids=list(node.reference_ids),
         score=node.score,
     )
 
@@ -152,6 +153,7 @@ def merge_graph_data(base: KnowledgeGraphData, incoming: ImportedKnowledgeBatch)
             existing.detail = _append_unique_detail(existing.detail, node.detail)
             existing.aliases = unique_list([*existing.aliases, node.label, *node.aliases])
             existing.sources = unique_list([*existing.sources, *node.sources])
+            existing.reference_ids = unique_list([*existing.reference_ids, *node.reference_ids])
             existing.score = max(existing.score, node.score)
             label_to_id[key] = existing_id
             for alias in node.aliases:
@@ -197,6 +199,8 @@ def merge_graph_data(base: KnowledgeGraphData, incoming: ImportedKnowledgeBatch)
     for edge in [*base.edges, *incoming.edges, *inferred_edges]:
         source = id_remap.get(edge.source, edge.source)
         target = id_remap.get(edge.target, edge.target)
+        if source == target:
+            continue
         key = f"{source}:{edge.kind}:{target}:{canonical_text(edge.label)}"
         existing = edge_map.get(key)
         if existing:

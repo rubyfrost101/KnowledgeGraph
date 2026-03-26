@@ -142,6 +142,7 @@ export async function ingestText(text: string, origin: string): Promise<IngestFi
     const node = createNodeFromHeading(cleaned, inferKind(cleaned), documentId, detail);
     node.aliases = aliases;
     node.sources = [documentId];
+    node.referenceIds = [];
     node.summary = splitSentences(detail)[0]?.slice(0, 160) ?? detail.slice(0, 160);
     nodesByLabel.set(key, node);
   }

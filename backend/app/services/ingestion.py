@@ -147,6 +147,21 @@ def _append_citation(detail: str, citation: str) -> str:
     return f"{detail}\n\n{citation}"
 
 
+def _body_lines(lines: list[str]) -> list[str]:
+    return [line for line in lines if line and not _looks_like_heading(line) and not _is_page_marker(line)]
+
+
+def _body_text(lines: list[str]) -> str:
+    return "\n".join(_body_lines(lines)).strip()
+
+
+def _merge_reference_ids(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        merged = unique_list([*merged, *group])
+    return merged
+
+
 def _split_sentences(text: str) -> list[str]:
     chunks = [chunk.strip() for chunk in re.split(r"(?<=[。！？!?\.])\s+|(?<=\n)", text.replace("\r\n", "\n")) if chunk.strip()]
     return chunks or [text.strip()]
@@ -229,6 +244,8 @@ def _relation_kind(sentence: str) -> tuple[RelationKind, str]:
 def _dedupe_edges(edges: list[KnowledgeEdge]) -> list[KnowledgeEdge]:
     seen: dict[str, KnowledgeEdge] = {}
     for edge in edges:
+        if edge.source == edge.target:
+            continue
         key = f"{edge.source}:{edge.kind}:{edge.target}:{canonical_text(edge.label)}"
         if key in seen:
             existing = seen[key]
@@ -256,6 +273,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
         detail=f"文档来源：{request.origin}\n\n这是这份导入的目录根节点。",
         aliases=unique_list([title, *_extract_aliases(request.text)]),
         sources=[document_id],
+        reference_ids=[],
         score=1.0,
     )
     nodes_by_id[root_node.id] = root_node
@@ -275,16 +293,18 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
         parent = _current_section()
         section_key = f"{parent.node.id}::{canonical_text(label)}"
         node = sections_by_key.get(section_key)
+        body_text = _body_text(block_text.split("\n"))
         if node is None:
             node = KnowledgeNode(
                 id=stable_id("node", f"{document_id}:{section_key}"),
                 label=label,
                 kind="topic",
                 category=_category_from_text(f"{label} {block_text}"),
-                summary=_split_sentences(block_text)[0][:160] if block_text else label,
-                detail=block_text.strip(),
+                summary=_split_sentences(body_text or label)[0][:160],
+                detail=body_text or block_text.strip(),
                 aliases=_extract_aliases(block_text),
                 sources=[document_id],
+                reference_ids=[parent.node.id] if parent.node.id != root_node.id else [],
                 score=1.0,
             )
             sections_by_key[section_key] = node
@@ -302,8 +322,9 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             )
             section_anchor_count += 1
         else:
-            node.detail = _append_detail(node.detail, block_text.strip())
+            node.detail = _append_detail(node.detail, body_text or block_text.strip())
             node.aliases = unique_list([*node.aliases, *_extract_aliases(block_text)])
+            node.reference_ids = _merge_reference_ids(node.reference_ids, [parent.node.id] if parent.node.id != root_node.id else [])
 
         context = _SectionContext(
             node=node,
@@ -339,15 +360,17 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             citation = _citation_from_path(title, current_breadcrumb, line)
             existing = term_nodes_by_label.get(term_key)
             if existing is None:
+                term_body = parsed.detail.strip()
                 term_node = KnowledgeNode(
                     id=stable_id("node", f"{document_id}:{term_key}"),
                     label=parsed.label,
                     kind=_infer_kind(parsed.label),
                     category=_category_from_text(f"{parsed.label} {parsed.detail}"),
-                    summary=_split_sentences(parsed.detail)[0][:160],
+                    summary=_split_sentences(term_body)[0][:160],
                     detail=_append_citation(parsed.detail, citation),
                     aliases=unique_list([parsed.label, *_extract_aliases(parsed.label), *_extract_aliases(parsed.detail)]),
                     sources=[document_id],
+                    reference_ids=[section_context.node.id],
                     score=1.0,
                 )
                 term_nodes_by_label[term_key] = term_node
@@ -368,6 +391,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                 existing.detail = _append_citation(_append_detail(existing.detail, parsed.detail), citation)
                 existing.aliases = unique_list([*existing.aliases, parsed.label, *_extract_aliases(parsed.label), *_extract_aliases(parsed.detail)])
                 existing.sources = unique_list([*existing.sources, document_id])
+                existing.reference_ids = _merge_reference_ids(existing.reference_ids, [section_context.node.id])
                 if existing.id == section_context.node.id:
                     continue
                 relation_edges.append(
@@ -393,6 +417,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             detail=request.text,
             aliases=unique_list([fallback_label, *_extract_aliases(request.text)]),
             sources=[document_id],
+            reference_ids=[],
             score=1.0,
         )
         nodes_by_id[fallback_node.id] = fallback_node
@@ -417,6 +442,8 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             kind, label = _relation_kind(sentence)
             if kind == "mentions":
                 for source, target in combinations(mentioned, 2):
+                    if source.id == target.id:
+                        continue
                     edges.append(
                         KnowledgeEdge(
                             id=stable_id("edge", f"{source.id}:same-domain:{target.id}:co-occur:{document_id}"),
@@ -432,6 +459,8 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                 for index in range(len(mentioned) - 1):
                     source = mentioned[index]
                     target = mentioned[index + 1]
+                    if source.id == target.id:
+                        continue
                     edges.append(
                         KnowledgeEdge(
                             id=stable_id("edge", f"{source.id}:{kind}:{target.id}:{label}:{document_id}"),
@@ -448,6 +477,8 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
         unique_block_mentions = list({node.id: node for node in block_mentions}.values())
         if len(unique_block_mentions) > 2:
             for source, target in combinations(unique_block_mentions, 2):
+                if source.id == target.id:
+                    continue
                 edges.append(
                     KnowledgeEdge(
                         id=stable_id("edge", f"{source.id}:same-domain:{target.id}:section-co-occur:{document_id}"),

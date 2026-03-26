@@ -25,6 +25,7 @@ class KnowledgeNode(BaseModel):
     detail: str
     aliases: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
+    reference_ids: list[str] = Field(default_factory=list)
     score: float = 1.0
     deleted_at: str | None = None
     deleted_reason: str | None = None

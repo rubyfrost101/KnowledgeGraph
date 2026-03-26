@@ -20,6 +20,7 @@ function node(
     detail,
     aliases,
     sources,
+    referenceIds: [],
     score,
   };
 }

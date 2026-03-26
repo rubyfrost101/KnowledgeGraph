@@ -77,6 +77,7 @@ def _node_to_model(row: KnowledgeNodeORM) -> KnowledgeNode:
         detail=row.detail,
         aliases=list(row.aliases or []),
         sources=list(row.sources or []),
+        reference_ids=list(row.reference_ids or []),
         score=row.score,
         deleted_at=row.deleted_at.isoformat() if row.deleted_at else None,
         deleted_reason=row.deleted_reason,
@@ -93,6 +94,14 @@ def _edge_to_model(row: KnowledgeEdgeORM) -> KnowledgeEdge:
         weight=row.weight,
         sources=list(row.sources or []),
     )
+
+
+def _is_valid_edge(edge: KnowledgeEdge) -> bool:
+    return edge.source != edge.target
+
+
+def _is_valid_edge_row(row: KnowledgeEdgeORM) -> bool:
+    return row.source != row.target
 
 
 class Neo4jProjector:
@@ -120,7 +129,8 @@ class Neo4jProjector:
                         n.summary = $summary,
                         n.detail = $detail,
                         n.score = $score,
-                        n.sources = $sources
+                        n.sources = $sources,
+                        n.reference_ids = $reference_ids
                     """,
                     graph_id=graph_id,
                     id=node.id,
@@ -131,9 +141,12 @@ class Neo4jProjector:
                     detail=node.detail,
                     score=node.score,
                     sources=node.sources,
+                    reference_ids=node.reference_ids,
                 )
 
             for edge in graph.edges:
+                if edge.source == edge.target:
+                    continue
                 session.run(
                     """
                     MATCH (a:KnowledgeNode {graph_id: $graph_id, id: $source})
@@ -180,6 +193,7 @@ class PersistentGraphStore:
             edges = [
                 _edge_to_model(row)
                 for row in session.scalars(select(KnowledgeEdgeORM).where(KnowledgeEdgeORM.deleted_at.is_(None))).all()
+                if _is_valid_edge_row(row)
             ]
         return KnowledgeGraphData(nodes=nodes, edges=edges, documents=documents)
 
@@ -536,6 +550,11 @@ class PersistentGraphStore:
             job.updated_at = _now()
 
     def _persist_snapshot(self, graph: KnowledgeGraphData) -> None:
+        graph = KnowledgeGraphData(
+            nodes=list(graph.nodes),
+            edges=[edge for edge in graph.edges if _is_valid_edge(edge)],
+            documents=list(graph.documents),
+        )
         with session_scope() as session:
             current_doc_ids = {document.id for document in graph.documents}
             current_node_ids = {node.id for node in graph.nodes}
@@ -583,6 +602,7 @@ class PersistentGraphStore:
                         detail=node.detail,
                         aliases=node.aliases,
                         sources=node.sources,
+                        reference_ids=node.reference_ids,
                         score=node.score,
                         deleted_at=None,
                         deleted_reason=None,
@@ -596,6 +616,7 @@ class PersistentGraphStore:
                     row.detail = node.detail
                     row.aliases = node.aliases
                     row.sources = node.sources
+                    row.reference_ids = node.reference_ids
                     row.score = node.score
                     row.deleted_at = None
                     row.deleted_reason = None
@@ -637,11 +658,19 @@ class PersistentGraphStore:
 
         self._sync_projection(graph)
 
+    def _cleanup_invalid_edges(self) -> None:
+        with session_scope() as session:
+            for row in session.scalars(select(KnowledgeEdgeORM).where(KnowledgeEdgeORM.deleted_at.is_(None))).all():
+                if row.source == row.target:
+                    row.deleted_at = _now()
+                    row.deleted_reason = "Removed invalid self-loop edge"
+
     def _seed_if_empty(self) -> None:
         with session_scope() as session:
             has_documents = session.scalar(select(DocumentORM.id).limit(1)) is not None
         if not has_documents:
             self._persist_snapshot(build_demo_graph())
+        self._cleanup_invalid_edges()
 
     def _sync_projection(self, graph: KnowledgeGraphData | None = None) -> None:
         try:

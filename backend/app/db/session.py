@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from functools import lru_cache
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
@@ -35,4 +35,16 @@ def session_scope() -> Session:
 
 
 def init_db() -> None:
-    Base.metadata.create_all(bind=get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+
+    inspector = inspect(engine)
+    node_columns = {column["name"] for column in inspector.get_columns("knowledge_nodes")}
+    with engine.begin() as connection:
+        if "reference_ids" not in node_columns:
+            if engine.dialect.name == "postgresql":
+                connection.execute(
+                    text("ALTER TABLE knowledge_nodes ADD COLUMN reference_ids JSONB NOT NULL DEFAULT '[]'::jsonb")
+                )
+            else:
+                connection.execute(text("ALTER TABLE knowledge_nodes ADD COLUMN reference_ids JSON NOT NULL DEFAULT '[]'"))

@@ -18,6 +18,7 @@ export interface KnowledgeNode {
   detail: string;
   aliases: string[];
   sources: string[];
+  referenceIds: string[];
   score: number;
   x?: number;
   y?: number;

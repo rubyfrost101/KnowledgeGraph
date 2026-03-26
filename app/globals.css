@@ -935,6 +935,56 @@ input:focus {
   font-size: 0.76rem;
 }
 
+.summary-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(233, 184, 109, 0.18);
+  background: linear-gradient(180deg, rgba(233, 184, 109, 0.09), rgba(255, 255, 255, 0.02));
+}
+
+.summary-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.summary-card-head strong {
+  font-size: 0.96rem;
+}
+
+.summary-card-kicker {
+  color: var(--accent);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.summary-keyword-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-keyword-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 215, 255, 0.2);
+  background: rgba(125, 215, 255, 0.08);
+  color: var(--text);
+  font-size: 0.76rem;
+}
+
+.summary-card p {
+  margin: 0;
+  color: #eef2ff;
+  line-height: 1.65;
+}
+
 .detail-summary {
   margin: 0 0 10px;
   font-size: 0.98rem;
@@ -1289,6 +1339,53 @@ body {
 
 .reader-original .detail-body {
   margin-top: 0;
+}
+
+.citation-preview-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(125, 215, 255, 0.16);
+  background: linear-gradient(180deg, rgba(125, 215, 255, 0.07), rgba(8, 16, 30, 0.62));
+}
+
+.citation-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.citation-preview-head strong {
+  display: block;
+  font-size: 0.96rem;
+}
+
+.citation-preview-head span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.citation-preview-kicker {
+  margin: 0 0 4px;
+  color: var(--accent-2);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.citation-preview-body {
+  margin: 0;
+  line-height: 1.68;
+  color: #eef2ff;
+}
+
+.citation-preview-note {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.56;
+  font-size: 0.84rem;
 }
 
 .source-list {

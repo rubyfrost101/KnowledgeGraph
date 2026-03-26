@@ -111,6 +111,41 @@ def _append_unique_detail(existing: str, incoming: str) -> str:
     return "\n\n".join([existing, incoming])
 
 
+def _summary_score(value: str, label: str) -> float:
+    text = value.strip()
+    if not text:
+        return 0.0
+    score = 0.0
+    length = len(text)
+    if 24 <= length <= 150:
+        score += 1.4
+    elif 12 <= length < 24:
+        score += 0.4
+    else:
+        score += max(0.0, 1.1 - abs(length - 84) / 120)
+    if re.search(r"[。！？!?\.]", text):
+        score += 0.4
+    if re.search(r"[，,；;：:]", text):
+        score += 0.2
+    if "目录卡片：" in text:
+        score += 0.8
+    if "关键词：" in text:
+        score += 0.4
+    if "一句话总结：" in text:
+        score += 0.8
+    if canonical_text(text) == canonical_text(label):
+        score -= 1.0
+    return score
+
+
+def _pick_summary(existing: str, incoming: str, label: str) -> str:
+    if not existing.strip():
+        return incoming
+    if not incoming.strip():
+        return existing
+    return incoming if _summary_score(incoming, label) >= _summary_score(existing, label) else existing
+
+
 def _relation_kind_from_sentence(sentence: str) -> tuple[str, str]:
     if re.search(r"属于|是|is a|kind of|类型|type of|instance of", sentence, re.I):
         return "is-a", "is a"
@@ -170,7 +205,7 @@ def merge_graph_data(base: KnowledgeGraphData, incoming: ImportedKnowledgeBatch)
         if existing_id:
             id_remap[node.id] = existing_id
             existing = node_map[existing_id]
-            existing.summary = existing.summary or node.summary
+            existing.summary = _pick_summary(existing.summary, node.summary, existing.label)
             existing.detail = _append_unique_detail(existing.detail, node.detail)
             existing.aliases = unique_list([*existing.aliases, node.label, *node.aliases])
             existing.sources = unique_list([*existing.sources, *node.sources])

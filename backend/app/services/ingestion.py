@@ -227,6 +227,33 @@ def _prefer_summary(existing: str, incoming: str, label: str) -> str:
     return incoming_text if _score(incoming_text) >= _score(existing_text) else existing_text
 
 
+def _collect_keywords(label: str, candidates: list[str], limit: int = 4) -> list[str]:
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        item = re.sub(r"\s+", " ", candidate).strip(" -–—:：\t")
+        if not item:
+            continue
+        if len(item) > 42:
+            item = item[:42].rstrip()
+        normalized = canonical_text(item)
+        if not normalized or normalized == canonical_text(label) or normalized in seen:
+            continue
+        if _looks_like_heading(item):
+            continue
+        seen.add(normalized)
+        keywords.append(item)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _section_summary_card(label: str, detail: str, keywords: list[str]) -> str:
+    keyword_text = " / ".join(keywords) if keywords else "无"
+    one_line = _compress_summary(label, detail, limit=110)
+    return f"目录卡片：{label}\n关键词：{keyword_text}\n一句话总结：{one_line}"
+
+
 def _body_lines(lines: list[str]) -> list[str]:
     return [line for line in lines if line and not _looks_like_heading(line) and not _is_page_marker(line)]
 
@@ -240,6 +267,18 @@ def _merge_reference_ids(*groups: list[str]) -> list[str]:
     for group in groups:
         merged = unique_list([*merged, *group])
     return merged
+
+
+def _citation_context(lines: list[str], index: int, window: int = 1) -> str:
+    start = max(0, index - window)
+    end = min(len(lines), index + window + 1)
+    context_lines: list[str] = []
+    for position in range(start, end):
+        line = lines[position].strip()
+        if not line or _looks_like_heading(line) or _is_page_marker(line):
+            continue
+        context_lines.append(line)
+    return " ".join(context_lines).strip()
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -299,9 +338,11 @@ def _parse_term_line(line: str) -> _ParsedTerm | None:
     return None
 
 
-def _citation_from_path(document_title: str, breadcrumb: list[str], line: str) -> str:
+def _citation_from_path(document_title: str, breadcrumb: list[str], line: str, context: str = "") -> str:
     path_text = " / ".join(breadcrumb) if breadcrumb else document_title
     citation = f"引用：{document_title} · {path_text}"
+    if context:
+        citation = f"{citation}\n上下文：{context.strip()}"
     if line:
         citation = f"{citation}\n原句：{line.strip()}"
     return citation
@@ -343,6 +384,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
     nodes_by_id: dict[str, KnowledgeNode] = {}
     term_nodes_by_label: dict[str, KnowledgeNode] = {}
     sections_by_key: dict[str, KnowledgeNode] = {}
+    section_keyword_candidates: dict[str, list[str]] = {}
     relation_edges: list[KnowledgeEdge] = []
     root_node = KnowledgeNode(
         id=stable_id("node", f"{document_id}:book"),
@@ -365,6 +407,11 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
 
     def _current_section() -> _SectionContext:
         return section_stack[-1]
+
+    def _add_keywords(section_ids: list[str], *values: str) -> None:
+        for section_id in section_ids:
+            candidates = section_keyword_candidates.setdefault(section_id, [])
+            candidates.extend(value for value in values if value)
 
     def _register_section(label: str, level: int, block_text: str) -> _SectionContext:
         nonlocal section_anchor_count
@@ -393,6 +440,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             )
             sections_by_key[section_key] = node
             nodes_by_id[node.id] = node
+            _add_keywords([context.node.id for context in section_stack], label)
             relation_edges.append(
                 KnowledgeEdge(
                     id=stable_id("edge", f"{node.id}:part-of:{parent.node.id}:section-parent:{document_id}"),
@@ -435,14 +483,16 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
 
         block_contexts.append(section_context)
         current_breadcrumb = list(section_context.breadcrumb)
-        for line in lines:
+        ancestor_ids = [context.node.id for context in section_stack]
+        for index, line in enumerate(lines):
             parsed = _parse_term_line(line)
             if parsed is None:
                 continue
             term_key = canonical_text(parsed.label)
             if not term_key:
                 continue
-            citation = _citation_from_path(title, current_breadcrumb, line)
+            context_text = _citation_context(lines, index)
+            citation = _citation_from_path(title, current_breadcrumb, line, context_text)
             existing = term_nodes_by_label.get(term_key)
             if existing is None:
                 term_body = parsed.detail.strip()
@@ -462,6 +512,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                 term_nodes_by_label[term_key] = term_node
                 nodes_by_id[term_node.id] = term_node
                 term_count += 1
+                _add_keywords(ancestor_ids, parsed.label)
                 relation_edges.append(
                     KnowledgeEdge(
                         id=stable_id("edge", f"{term_node.id}:part-of:{section_context.node.id}:term-anchor:{document_id}"),
@@ -483,6 +534,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                     [section_context.node.id],
                 )
                 existing.summary = _prefer_summary(existing.summary, _compress_summary(parsed.label, parsed.detail, limit=100), parsed.label)
+                _add_keywords(ancestor_ids, parsed.label)
                 if existing.id == section_context.node.id:
                     continue
                 relation_edges.append(
@@ -581,6 +633,17 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                         sources=[document_id],
                     )
                 )
+
+    for node in nodes_by_id.values():
+        if node.kind not in {"book", "topic"}:
+            continue
+        candidates = [
+            *section_keyword_candidates.get(node.id, []),
+            *node.aliases,
+            *_extract_aliases(node.detail),
+        ]
+        keywords = _collect_keywords(node.label, candidates, limit=4)
+        node.summary = _section_summary_card(node.label, node.detail, keywords)
 
     edges = _dedupe_edges(edges)
     final_nodes = list(nodes_by_id.values())

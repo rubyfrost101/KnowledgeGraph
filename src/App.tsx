@@ -5,7 +5,7 @@ import { answerQuestion, collectNeighborhood, layoutGraph, mergeGraphData, searc
 import { ingestText } from './lib/ingest';
 import { readKnowledgeFile } from './lib/files';
 import { demoGraph } from './lib/sampleData';
-import { canonicalText } from './lib/normalize';
+import { canonicalText, uniqueList } from './lib/normalize';
 import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeEdge, KnowledgeGraphData, KnowledgeJob, KnowledgeNode } from './types';
 import {
   askBackendQuestion,
@@ -174,6 +174,86 @@ function splitDetail(detail: string): { narrative: string; citations: string[] }
   };
 }
 
+function truncateText(value: string, limit = 120): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit).trimEnd()}…`;
+}
+
+type SectionSummaryParts = {
+  card: string;
+  keywords: string[];
+  oneLine: string;
+};
+
+function splitSectionSummary(summary: string, fallbackLabel: string): SectionSummaryParts {
+  const lines = summary
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const structured: SectionSummaryParts = {
+    card: fallbackLabel,
+    keywords: [],
+    oneLine: '',
+  };
+  let matchedStructuredLine = false;
+  for (const line of lines) {
+    if (line.startsWith('目录卡片：')) {
+      structured.card = line.replace('目录卡片：', '').trim() || fallbackLabel;
+      matchedStructuredLine = true;
+      continue;
+    }
+    if (line.startsWith('关键词：')) {
+      structured.keywords = uniqueList(
+        line
+          .replace('关键词：', '')
+          .split(/[\/、,，；;|]/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      );
+      matchedStructuredLine = true;
+      continue;
+    }
+    if (line.startsWith('一句话总结：')) {
+      structured.oneLine = line.replace('一句话总结：', '').trim();
+      matchedStructuredLine = true;
+      continue;
+    }
+  }
+  if (!matchedStructuredLine) {
+    const compact = truncateText(summary || fallbackLabel, 96);
+    return {
+      card: fallbackLabel,
+      keywords: [],
+      oneLine: compact,
+    };
+  }
+  return {
+    card: structured.card || fallbackLabel,
+    keywords: structured.keywords,
+    oneLine: structured.oneLine || truncateText(summary || fallbackLabel, 96),
+  };
+}
+
+function splitCitationPreview(citation: string): { source: string; path: string; context: string; original: string } {
+  const parts = citation
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const source = parts.find((line) => line.startsWith('引用：'))?.replace('引用：', '').trim() ?? '';
+  const context = parts.find((line) => line.startsWith('上下文：'))?.replace('上下文：', '').trim() ?? '';
+  const original = parts.find((line) => line.startsWith('原句：'))?.replace('原句：', '').trim() ?? '';
+  const path = source.includes('·') ? source.split('·').slice(1).join('·').trim() : source;
+  return {
+    source,
+    path,
+    context,
+    original,
+  };
+}
+
 function isSectionNode(node: KnowledgeNode): boolean {
   return node.kind === 'book' || node.kind === 'topic';
 }
@@ -193,6 +273,13 @@ type GlossaryTreeIndex = {
   sectionChildrenById: Map<string, Set<string>>;
   itemsBySectionId: Map<string, Set<string>>;
   itemParentById: Map<string, string>;
+};
+
+type HoverPreview = {
+  title: string;
+  subtitle: string;
+  body: string;
+  note?: string;
 };
 
 function buildGlossaryTree(graph: KnowledgeGraphData): GlossaryTreeIndex {
@@ -369,6 +456,7 @@ function App() {
   const [status, setStatus] = useState('准备就绪，先试试示例图谱。');
   const [importTextValue, setImportTextValue] = useState('');
   const [viewMode, setViewMode] = useState<'graph' | 'glossary'>('graph');
+  const [citationPreview, setCitationPreview] = useState<HoverPreview | null>(null);
   const [searchMatches, setSearchMatches] = useState<KnowledgeNode[]>([]);
   const [expandedGlossaryIds, setExpandedGlossaryIds] = useState<string[]>([]);
   const [jobs, setJobs] = useState<KnowledgeJob[]>([]);
@@ -485,6 +573,7 @@ function App() {
     : [];
   const detailNode = viewMode === 'glossary' ? glossarySelectedNode : selectedNode;
   const detailParts = detailNode ? splitDetail(detailNode.detail) : { narrative: '', citations: [] as string[] };
+  const detailSummaryParts = detailNode && isGlossaryView ? splitSectionSummary(detailNode.summary, detailNode.label) : null;
 
   async function importRawText(text: string, origin: string, type: 'text' | 'pdf') {
     const trimmed = text.trim();
@@ -666,6 +755,26 @@ function App() {
     }
   }
 
+  function showReferencePreview(target: KnowledgeNode) {
+    const detailParts = splitDetail(target.detail);
+    setCitationPreview({
+      title: target.label,
+      subtitle: `${kindLabel(target.kind)} · ${target.category}`,
+      body: truncateText(detailParts.narrative || target.summary || target.detail, 220),
+      note: target.referenceIds.length > 0 ? '来源锚点可继续跳转到上级目录。' : '当前节点没有更上层的引用锚点。',
+    });
+  }
+
+  function showCitationPreview(citation: string, target: KnowledgeNode | null) {
+    const parsed = splitCitationPreview(citation);
+    setCitationPreview({
+      title: target?.label ?? parsed.source ?? '引用预览',
+      subtitle: target ? `${kindLabel(target.kind)} · ${target.category}` : parsed.path || parsed.source || '引用来源',
+      body: truncateText(parsed.context || parsed.original || target?.summary || citation, 240),
+      note: parsed.original && parsed.original !== parsed.context ? `原句：${parsed.original}` : undefined,
+    });
+  }
+
   function renderReferenceChips(referenceIds: string[], label = '来源锚点') {
     const targets = referenceIds
       .map((referenceId) => glossaryIndex.nodesById.get(referenceId))
@@ -681,6 +790,10 @@ function App() {
             className="anchor-chip"
             type="button"
             onClick={() => focusGlossaryReference(target.id)}
+            onMouseEnter={() => showReferencePreview(target)}
+            onMouseLeave={() => setCitationPreview(null)}
+            onFocus={() => showReferencePreview(target)}
+            onBlur={() => setCitationPreview(null)}
           >
             <span className="anchor-chip-kind">{kindLabel(target.kind)}</span>
             <strong>{target.label}</strong>
@@ -706,7 +819,16 @@ function App() {
             );
           }
           return (
-            <button key={citation} type="button" className="citation-line citation-button" onClick={() => focusGlossaryNode(target)}>
+            <button
+              key={citation}
+              type="button"
+              className="citation-line citation-button"
+              onClick={() => focusGlossaryNode(target)}
+              onMouseEnter={() => showCitationPreview(citation, target)}
+              onMouseLeave={() => setCitationPreview(null)}
+              onFocus={() => showCitationPreview(citation, target)}
+              onBlur={() => setCitationPreview(null)}
+            >
               <span className="citation">{citation}</span>
               <span className="citation-jump">跳转</span>
             </button>
@@ -752,6 +874,10 @@ function App() {
   function renderGlossarySection(section: GlossaryTreeNode, depth = 0) {
     const isOpen = depth === 0 || expandedGlossaryIds.includes(section.node.id);
     const detailParts = splitDetail(section.node.detail);
+    const summaryParts = splitSectionSummary(section.node.summary, section.node.label);
+    const summaryKeywords = summaryParts.keywords.length > 0
+      ? summaryParts.keywords
+      : uniqueList([...section.children.map((child) => child.node.label), ...section.items.map((item) => item.label)]).slice(0, 4);
     const isSelected = selectedId === section.node.id;
     return (
       <div
@@ -783,7 +909,24 @@ function App() {
         {isOpen ? (
           <div className="glossary-section-body">
             <div className="glossary-section-summary">
-              <p>{detailParts.narrative || section.node.summary}</p>
+              <div className="summary-card">
+                <div className="summary-card-head">
+                  <span className="summary-card-kicker">目录卡片</span>
+                  <strong>{summaryParts.card}</strong>
+                </div>
+                <div className="summary-keyword-row">
+                  {summaryKeywords.length > 0 ? (
+                    summaryKeywords.map((keyword) => (
+                      <span key={keyword} className="summary-keyword-pill">
+                        {keyword}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="muted">暂无关键词</span>
+                  )}
+                </div>
+                <p>{summaryParts.oneLine || detailParts.narrative || section.node.summary}</p>
+              </div>
               {section.node.referenceIds.length > 0 ? renderReferenceChips(section.node.referenceIds) : null}
               {renderCitationChips(detailParts.citations, section.node)}
             </div>
@@ -1348,8 +1491,46 @@ function App() {
                         <h3>摘要</h3>
                         <span>卡片式概览</span>
                       </div>
-                      <p className="detail-summary">{detailNode.summary}</p>
+                      {detailSummaryParts ? (
+                        <div className="summary-card">
+                          <div className="summary-card-head">
+                            <span className="summary-card-kicker">目录卡片</span>
+                            <strong>{detailSummaryParts.card}</strong>
+                          </div>
+                          <div className="summary-keyword-row">
+                            {(detailSummaryParts.keywords.length > 0
+                              ? detailSummaryParts.keywords
+                              : uniqueList([...glossaryChildSections.map((node) => node.label), ...glossaryChildItems.map((node) => node.label)]).slice(0, 4)
+                            ).map((keyword) => (
+                              <span key={keyword} className="summary-keyword-pill">
+                                {keyword}
+                              </span>
+                            ))}
+                          </div>
+                          <p>{detailSummaryParts.oneLine}</p>
+                        </div>
+                      ) : (
+                        <p className="detail-summary">{detailNode.summary}</p>
+                      )}
                     </section>
+
+                    <div className="citation-preview-card" aria-live="polite">
+                      {citationPreview ? (
+                        <>
+                          <div className="citation-preview-head">
+                            <div>
+                              <p className="citation-preview-kicker">悬停预览</p>
+                              <strong>{citationPreview.title}</strong>
+                            </div>
+                            <span>{citationPreview.subtitle}</span>
+                          </div>
+                          <p className="citation-preview-body">{citationPreview.body}</p>
+                          {citationPreview.note ? <p className="citation-preview-note">{citationPreview.note}</p> : null}
+                        </>
+                      ) : (
+                        <p className="muted">把鼠标移到引用锚点上，可以直接看到原句上下文。</p>
+                      )}
+                    </div>
 
                     <section className="reader-block reader-original">
                       <div className="reader-head">

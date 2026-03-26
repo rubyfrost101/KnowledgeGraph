@@ -266,6 +266,7 @@ class PersistentGraphStore:
                 deleted_at=None,
             )
             session.add(document)
+            session.flush()
             session.add(
                 DocumentBlobORM(
                     document_id=document_id,

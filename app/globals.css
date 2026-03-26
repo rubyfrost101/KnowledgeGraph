@@ -528,6 +528,120 @@ input:focus {
   font-size: 0.84rem;
 }
 
+.steam-hud--enter {
+  animation: steam-enter 420ms ease both;
+}
+
+.steam-stage-list {
+  display: grid;
+  gap: 10px;
+}
+
+.steam-stage {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+  color: var(--text);
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.12);
+  background: rgba(7, 16, 24, 0.7);
+  transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.steam-stage:hover {
+  transform: translateY(-1px);
+  border-color: rgba(141, 240, 192, 0.24);
+}
+
+.steam-stage.is-unlocked {
+  background: linear-gradient(135deg, rgba(141, 240, 192, 0.12), rgba(7, 16, 24, 0.82));
+  box-shadow: 0 0 0 1px rgba(141, 240, 192, 0.1), 0 14px 28px rgba(0, 0, 0, 0.16);
+}
+
+.steam-stage-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  color: #06111b;
+  font-size: 0.82rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, rgba(141, 240, 192, 0.95), rgba(204, 255, 231, 0.98));
+}
+
+.steam-stage strong,
+.steam-achievement strong {
+  display: block;
+  font-size: 0.94rem;
+}
+
+.steam-stage p,
+.steam-achievement p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 0.82rem;
+}
+
+.steam-achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.steam-achievement {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.12);
+  background: rgba(7, 16, 24, 0.62);
+}
+
+.steam-achievement span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.steam-achievement.is-unlocked {
+  border-color: rgba(141, 240, 192, 0.24);
+  background: linear-gradient(135deg, rgba(141, 240, 192, 0.14), rgba(7, 16, 24, 0.88));
+  animation: steam-achievement-pop 520ms ease;
+}
+
+@keyframes steam-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes steam-achievement-pop {
+  0% {
+    transform: scale(0.96);
+    box-shadow: 0 0 0 rgba(141, 240, 192, 0);
+  }
+  60% {
+    transform: scale(1.015);
+    box-shadow: 0 0 0 6px rgba(141, 240, 192, 0.06);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 rgba(141, 240, 192, 0);
+  }
+}
+
 .task-hero,
 .task-item,
 .trash-item {
@@ -1383,6 +1497,10 @@ input:focus {
   }
 
   .steam-hud-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .steam-achievement-grid {
     grid-template-columns: 1fr;
   }
 }

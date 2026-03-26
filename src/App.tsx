@@ -666,6 +666,45 @@ function App() {
   const steamAnchors = graph.nodes.filter((node) => node.referenceIds.length > 0).length;
   const steamHeat = selectedEdges.length;
   const steamUnlockedDocs = graph.documents.length;
+  const steamStages = [
+    {
+      title: '关卡 1 · 点亮图谱',
+      subtitle: `${graph.nodes.length} 个知识点`,
+      unlocked: graph.nodes.length >= 5,
+    },
+    {
+      title: '关卡 2 · 锚点追踪',
+      subtitle: `${steamAnchors} 个可追溯锚点`,
+      unlocked: steamAnchors > 0,
+    },
+    {
+      title: '关卡 3 · 连线打通',
+      subtitle: `${steamHeat} 条邻接关系`,
+      unlocked: steamHeat >= 3,
+    },
+  ];
+  const steamAchievements = [
+    {
+      title: '图鉴入门',
+      description: '收集至少 5 个知识点。',
+      unlocked: graph.nodes.length >= 5,
+    },
+    {
+      title: '来源追踪者',
+      description: '触发一个可追溯锚点。',
+      unlocked: steamAnchors > 0,
+    },
+    {
+      title: '任务完成',
+      description: '完成一次导入任务。',
+      unlocked: jobs.some((job) => job.status === 'completed'),
+    },
+    {
+      title: '关系指挥官',
+      description: '当前节点周围形成 3 条以上连接。',
+      unlocked: steamHeat >= 3,
+    },
+  ];
   const glossaryTrail = selectedId ? buildGlossaryTrail(selectedId, glossaryIndex.sectionParentById, glossaryIndex.itemParentById) : [];
   const glossarySelectedNode = selectedNode;
   const glossaryChildSections = selectedId
@@ -1278,7 +1317,7 @@ function App() {
           </section>
 
           {isSteamSkin ? (
-            <section className="card steam-hud">
+            <section className="card steam-hud steam-hud--enter">
               <div className="card-head">
                 <div>
                   <p className="card-kicker">Steam Preview</p>
@@ -1310,6 +1349,26 @@ function App() {
                   <strong>{steamUnlockedDocs}</strong>
                   <p>导入过的书、PDF 和笔记。</p>
                 </article>
+              </div>
+              <div className="steam-stage-list">
+                {steamStages.map((stage, index) => (
+                  <button key={stage.title} type="button" className={`steam-stage ${stage.unlocked ? 'is-unlocked' : ''}`} onClick={() => (index === 0 ? setViewMode('graph') : index === 1 ? setViewMode('glossary') : setQuestion(quickQuestions[0]))}>
+                    <span className="steam-stage-index">0{index + 1}</span>
+                    <div>
+                      <strong>{stage.title}</strong>
+                      <p>{stage.subtitle}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="steam-achievement-grid">
+                {steamAchievements.map((achievement) => (
+                  <article key={achievement.title} className={`steam-achievement ${achievement.unlocked ? 'is-unlocked' : ''}`}>
+                    <span>{achievement.unlocked ? '已解锁' : '未解锁'}</span>
+                    <strong>{achievement.title}</strong>
+                    <p>{achievement.description}</p>
+                  </article>
+                ))}
               </div>
               <div className="steam-quest-list">
                 <button className="steam-quest" type="button" onClick={() => setViewMode('graph')}>

@@ -29,6 +29,13 @@ In short:
 - `Neo4j` for graph traversal and neighborhood search
 - `Redis` plus a worker queue for background ingestion
 
+There is now a first backend scaffold in [`backend/`](./backend) with:
+
+- `FastAPI` app skeleton
+- Demo graph endpoints
+- Text ingestion and Q&A placeholders
+- `docker-compose.yml` for `PostgreSQL`, `Neo4j`, and `Redis`
+
 ## Suggested product names
 
 If you want something more brandable than `KnowledgeGraph`, a few directions are:
@@ -41,7 +48,29 @@ If you want something more brandable than `KnowledgeGraph`, a few directions are
 
 ## Run locally
 
+Frontend:
+
 ```bash
 pnpm install
 pnpm dev
+```
+
+If you want the frontend to talk to the FastAPI backend, create a local `.env.local` with:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+```
+
+Backend:
+
+```bash
+cd backend
+pip3 install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+Or run the full stack with Docker:
+
+```bash
+docker compose up --build
 ```

@@ -2,6 +2,8 @@
 
 This project is designed as a web-first product with a dedicated FastAPI backend that handles ingestion, extraction, retrieval, and question answering.
 
+The repository now includes an initial backend scaffold in [`backend/`](../backend) so these boundaries can be implemented incrementally instead of only remaining as a design note.
+
 ## Recommended stack
 
 - API layer: `FastAPI`
@@ -216,4 +218,3 @@ This is important for language learning and technical subjects where different b
 - Human review tools
 - Collaborative annotation
 - Offline sync for desktop and tablet clients
-

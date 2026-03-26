@@ -6,6 +6,7 @@ import { ingestText } from './lib/ingest';
 import { readKnowledgeFile } from './lib/files';
 import { demoGraph } from './lib/sampleData';
 import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeGraphData, KnowledgeNode } from './types';
+import { askBackendQuestion, fetchBackendGraph, ingestBackendText, isBackendConfigured } from './lib/backendClient';
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 820;
@@ -16,6 +17,8 @@ const quickQuestions = [
   '递归和抽象有什么关系？',
   '工业革命最重要的节点是什么？',
 ];
+
+const backendConfigured = isBackendConfigured();
 
 function kindLabel(kind: KnowledgeNode['kind']): string {
   switch (kind) {
@@ -107,6 +110,36 @@ function App() {
     setSearchMatches(searchNode(graph, query).slice(0, 6));
   }, [graph, query]);
 
+  useEffect(() => {
+    let active = true;
+
+    async function hydrateFromBackend() {
+      if (!backendConfigured) {
+        return;
+      }
+
+      setStatus('正在连接后端知识库...');
+      try {
+        const remoteGraph = await fetchBackendGraph();
+        if (!active) {
+          return;
+        }
+        setGraph(remoteGraph);
+        setSelectedId(remoteGraph.nodes[0]?.id ?? '');
+        setStatus('已连接后端知识库。');
+      } catch {
+        if (active) {
+          setStatus('后端暂不可用，继续使用本地图谱。');
+        }
+      }
+    }
+
+    void hydrateFromBackend();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const selectedNode = graph.nodes.find((node) => node.id === selectedId) ?? null;
   const selectedLayoutNode = layout.nodes.find((node) => node.id === selectedId) ?? selectedNode;
   const neighborhood = selectedId ? collectNeighborhood(graph, selectedId) : null;
@@ -124,19 +157,31 @@ function App() {
 
     setBusy(true);
     try {
-      const result = await ingestText(trimmed, origin);
-      const documents: KnowledgeDocument[] = result.batch.documents.map((document) => ({
-        ...document,
-        type,
-        origin,
-      }));
-      const payload = {
-        ...result.batch,
-        documents,
-      };
-      setGraph((current) => mergeGraphData(current, payload));
-      setSelectedId(result.batch.nodes[0]?.id ?? selectedId);
-      setStatus(result.summary);
+      if (backendConfigured) {
+        const result = await ingestBackendText({
+          text: trimmed,
+          origin,
+          title: origin,
+          source_type: type,
+        });
+        setGraph(result.graph);
+        setSelectedId(result.graph.nodes[0]?.id ?? selectedId);
+        setStatus(result.summary);
+      } else {
+        const result = await ingestText(trimmed, origin);
+        const documents: KnowledgeDocument[] = result.batch.documents.map((document) => ({
+          ...document,
+          type,
+          origin,
+        }));
+        const payload = {
+          ...result.batch,
+          documents,
+        };
+        setGraph((current) => mergeGraphData(current, payload));
+        setSelectedId(result.batch.nodes[0]?.id ?? selectedId);
+        setStatus(result.summary);
+      }
       setAnswer(null);
     } finally {
       setBusy(false);
@@ -185,7 +230,9 @@ function App() {
 
     setBusy(true);
     try {
-      const result = answerQuestion(graph, prompt, selectedId);
+      const result = backendConfigured
+        ? await askBackendQuestion({ question: prompt, contextNodeId: selectedId, topK: 5 })
+        : answerQuestion(graph, prompt, selectedId);
       setAnswer(result);
       setStatus(`已生成回答：${result.title}`);
     } finally {
@@ -328,6 +375,7 @@ function App() {
             <div className="toolbar-badges">
               <span>{selectedNode ? kindLabel(selectedNode.kind) : '无选中'}</span>
               <span>{selectedNode?.category ?? '待聚焦'}</span>
+              <span>{backendConfigured ? '后端模式' : '本地模式'}</span>
               <span>{busy ? '处理中' : status}</span>
             </div>
           </div>

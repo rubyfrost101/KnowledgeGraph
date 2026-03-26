@@ -61,6 +61,8 @@ Current implementation note:
 - The repo now exposes `POST /v1/documents/upload` for multipart file ingestion
 - PDFs are parsed with `pypdf` for selectable text
 - OCR is still a planned fallback for scanned PDFs
+- Background uploads are queued through Redis/RQ when the persistent backend is active
+- PostgreSQL is treated as the source of truth and Neo4j as the graph projection
 
 ### `Knowledge extraction`
 
@@ -203,6 +205,17 @@ This is important for language learning and technical subjects where different b
 - Show uncertainty when evidence is weak
 - Use source-aware prompting so the model sees only the most relevant chunks
 - Cache results for repeated questions
+
+## Deletion semantics
+
+We use soft deletion so undo remains possible:
+
+- Importing a file creates a document revision payload
+- Removing a document subtracts its source id from merged nodes and edges
+- If a node or edge has no remaining sources, it is hidden via soft delete
+- Removing a concept directly also soft-deletes incident edges
+- Undoing a document import replays the saved revision and re-merges it into the graph
+- Undoing a concept deletion clears the soft-delete flag and reactivates its edges
 
 ## Delivery phases
 

@@ -33,7 +33,7 @@ There is now a first backend scaffold in [`backend/`](./backend) with:
 
 - `FastAPI` app skeleton
 - Demo graph endpoints
-- Text ingestion, file upload ingestion, and Q&A endpoints
+- Text ingestion, queued file upload ingestion, OCR fallback, and Q&A endpoints
 - `docker-compose.yml` for `PostgreSQL`, `Neo4j`, and `Redis`
 
 ## Suggested product names
@@ -73,6 +73,14 @@ The backend now accepts both JSON text ingestion and multipart file upload at:
 
 - `POST /v1/documents`
 - `POST /v1/documents/upload`
+
+Deletion and undo rules:
+
+- Deleting an imported document removes its provenance from connected nodes and edges
+- If a node or edge no longer has any sources, it is soft-deleted
+- Deleting a knowledge point is also soft-deleted so it can be restored later
+- Restoring a document replays the saved revision payload and merges it back into the graph
+- Restoring a node clears the soft-delete flag and brings back its incident edges
 
 Or run the full stack with Docker:
 

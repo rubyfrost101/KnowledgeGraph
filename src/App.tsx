@@ -6,7 +6,18 @@ import { ingestText } from './lib/ingest';
 import { readKnowledgeFile } from './lib/files';
 import { demoGraph } from './lib/sampleData';
 import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeGraphData, KnowledgeNode } from './types';
-import { askBackendQuestion, fetchBackendGraph, ingestBackendText, isBackendConfigured, uploadBackendFile } from './lib/backendClient';
+import {
+  askBackendQuestion,
+  deleteBackendDocument,
+  deleteBackendNode,
+  fetchBackendGraph,
+  ingestBackendText,
+  isBackendConfigured,
+  pollBackendJob,
+  restoreBackendDocument,
+  restoreBackendNode,
+  uploadBackendFile,
+} from './lib/backendClient';
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 820;
@@ -198,14 +209,31 @@ function App() {
     setBusy(true);
     try {
       if (backendConfigured) {
-        const result = await uploadBackendFile({
+        const job = await uploadBackendFile({
           file,
           title: file.name,
           origin: file.name,
         });
-        setGraph(result.graph);
-        setSelectedId(result.graph.nodes[0]?.id ?? selectedId);
-        setStatus(result.summary);
+        setStatus(`文件已上传，任务 ${job.status}...`);
+
+        let currentJob = job;
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          if (currentJob.status === 'completed' || currentJob.status === 'failed') {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          currentJob = await pollBackendJob(job.job_id);
+          setStatus(`任务 ${currentJob.status}，进度 ${currentJob.progress}%`);
+        }
+
+        if (currentJob.status === 'failed') {
+          throw new Error(currentJob.error || '后端任务失败');
+        }
+
+        const remoteGraph = await fetchBackendGraph();
+        setGraph(remoteGraph);
+        setSelectedId(remoteGraph.nodes[0]?.id ?? selectedId);
+        setStatus(currentJob.summary || '文件已导入。');
       } else {
         const { text, pageCount } = await readKnowledgeFile(file);
         const result = await ingestText(text, file.name);
@@ -266,6 +294,45 @@ function App() {
     setStatus(`已聚焦到“${node.label}”。`);
   }
 
+  async function applyDocumentMutation(documentId: string, action: 'delete' | 'restore') {
+    setBusy(true);
+    try {
+      const result =
+        action === 'delete'
+          ? await deleteBackendDocument(documentId)
+          : await restoreBackendDocument(documentId);
+      if (result.graph) {
+        setGraph(result.graph);
+        setSelectedId(result.graph.nodes[0]?.id ?? '');
+      }
+      setStatus(result.message);
+      setAnswer(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyNodeMutation(action: 'delete' | 'restore') {
+    if (!selectedNode) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const result =
+        action === 'delete'
+          ? await deleteBackendNode(selectedNode.id)
+          : await restoreBackendNode(selectedNode.id);
+      if (result.graph) {
+        setGraph(result.graph);
+        setSelectedId(result.graph.nodes[0]?.id ?? '');
+      }
+      setStatus(result.message);
+      setAnswer(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <div className="ambient ambient-one" />
@@ -306,9 +373,13 @@ function App() {
             </div>
 
             <label className="file-drop">
-              <input type="file" accept=".pdf,.txt,.md,text/plain,application/pdf" onChange={handleFileChange} />
-              <span>拖拽或点击上传 PDF / TXT / MD</span>
-              <small>PDF 会先提取文字，再进入知识解析流程。</small>
+              <input
+                type="file"
+                accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.tif,.tiff,text/plain,application/pdf,image/*"
+                onChange={handleFileChange}
+              />
+              <span>拖拽或点击上传 PDF / TXT / MD / 图片</span>
+              <small>PDF 会先提取文字，扫描件和图片会走 OCR 兜底。</small>
             </label>
 
             <div className="divider" />
@@ -371,6 +442,39 @@ function App() {
                     <strong>{node.label}</strong>
                     <span>{node.summary}</span>
                   </button>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-head">
+              <div>
+                <p className="card-kicker">Documents</p>
+                <h2>已导入文档</h2>
+              </div>
+            </div>
+            <div className="search-results">
+              {graph.documents.length === 0 ? (
+                <p className="muted">暂无文档。</p>
+              ) : (
+                graph.documents.map((document) => (
+                  <div key={document.id} className="search-result">
+                    <strong>{document.title}</strong>
+                    <span>
+                      {document.type} · {document.origin}
+                    </span>
+                    <div className="actions-row">
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => applyDocumentMutation(document.id, 'delete')}
+                        disabled={busy}
+                      >
+                        撤回导入
+                      </button>
+                    </div>
+                  </div>
                 ))
               )}
             </div>
@@ -536,6 +640,18 @@ function App() {
                       <li key={source}>{source}</li>
                     ))}
                   </ul>
+                </div>
+
+                <div className="section-block">
+                  <h3>操作</h3>
+                  <div className="actions-row">
+                    <button className="ghost-button" type="button" onClick={() => applyNodeMutation('delete')} disabled={busy}>
+                      删除知识点
+                    </button>
+                    <button className="ghost-button" type="button" onClick={() => applyNodeMutation('restore')} disabled={busy}>
+                      恢复知识点
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (

@@ -81,7 +81,7 @@ def _dedupe_edges(edges: list[KnowledgeEdge]) -> list[KnowledgeEdge]:
 
 def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGraphData, str]:
     title = request.title or _title_from_text(request.text)
-    document_id = stable_id("doc", f"{request.origin}:{request.text[:120]}")
+    document_id = request.document_id or stable_id("doc", f"{request.origin}:{request.text[:120]}")
     blocks = _split_blocks(request.text)
     nodes_by_key: dict[str, KnowledgeNode] = {}
 

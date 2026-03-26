@@ -40,7 +40,7 @@ export interface KnowledgeEdge {
 export interface KnowledgeDocument {
   id: string;
   title: string;
-  type: 'demo' | 'pdf' | 'text';
+  type: 'demo' | 'pdf' | 'text' | 'image';
   origin: string;
   importedAt: string;
   pageCount?: number;

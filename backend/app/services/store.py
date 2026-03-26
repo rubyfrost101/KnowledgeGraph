@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 
 from app.models import (
     GraphNeighborhood,
@@ -73,6 +74,78 @@ class InMemoryGraphStore:
         self._merge_graph(graph)
         return IngestResponse(document=document, graph=self.snapshot(), summary=summary)
 
+    def enqueue_upload(self, filename: str, content_type: str | None, data: bytes, title: str | None, origin: str):
+        from app.models import JobStatusResponse
+        from uuid import uuid4
+
+        document = KnowledgeDocument(
+            id=f"doc-{uuid4().hex}",
+            title=title or filename,
+            type="text",
+            origin=origin,
+            imported_at=datetime.now(timezone.utc).isoformat(),
+            notes="Processed inline in memory store",
+        )
+        request = IngestRequest(title=document.title, text=data.decode("utf-8", errors="ignore"), origin=origin, source_type="text", document_id=document.id)
+        ingested_document, graph, summary = ingest_text(request)
+        self._merge_graph(graph)
+        return JobStatusResponse(
+            job_id=f"job-{uuid4().hex}",
+            document_id=ingested_document.id,
+            filename=filename,
+            kind="upload",
+            status="completed",
+            progress=100,
+            summary=summary,
+            error=None,
+        )
+
+    def get_job(self, job_id: str):
+        from app.models import JobStatusResponse
+
+        return JobStatusResponse(
+            job_id=job_id,
+            document_id="",
+            filename="",
+            kind="upload",
+            status="completed",
+            progress=100,
+            summary="In-memory jobs are immediate.",
+            error=None,
+        )
+
+    def process_upload_job(self, job_id: str) -> None:
+        return None
+
+    def delete_document(self, document_id: str):
+        from app.models import MutationResponse
+
+        self._graph.documents = [document for document in self._graph.documents if document.id != document_id]
+        for node in self._graph.nodes:
+            node.sources = [source for source in node.sources if source != document_id]
+        for edge in self._graph.edges:
+            edge.sources = [source for source in edge.sources if source != document_id]
+        self._graph.nodes = [node for node in self._graph.nodes if node.sources]
+        self._graph.edges = [edge for edge in self._graph.edges if edge.sources]
+        return MutationResponse(ok=True, message="Document deleted", graph=self.snapshot())
+
+    def restore_document(self, document_id: str):
+        from app.models import MutationResponse
+
+        return MutationResponse(ok=False, message="Restore is not supported in memory store", graph=self.snapshot())
+
+    def delete_node(self, node_id: str, reason: str | None = None):
+        from app.models import MutationResponse
+
+        self._graph.nodes = [node for node in self._graph.nodes if node.id != node_id]
+        self._graph.edges = [edge for edge in self._graph.edges if edge.source != node_id and edge.target != node_id]
+        return MutationResponse(ok=True, message="Node deleted", graph=self.snapshot())
+
+    def restore_node(self, node_id: str):
+        from app.models import MutationResponse
+
+        return MutationResponse(ok=False, message="Restore is not supported in memory store", graph=self.snapshot())
+
     async def ingest_upload(self, file, title: str | None = None, origin: str = "upload") -> UploadIngestResponse:
         text, page_count, source_type = await extract_text_from_upload(file)
         request = IngestRequest(title=title or file.filename, text=text, origin=origin, source_type=source_type)
@@ -110,4 +183,13 @@ class InMemoryGraphStore:
         )
 
 
-STORE = InMemoryGraphStore()
+def build_store():
+    try:
+        from app.services.persistent_store import PersistentGraphStore
+
+        return PersistentGraphStore()
+    except Exception:
+        return InMemoryGraphStore()
+
+
+STORE = build_store()

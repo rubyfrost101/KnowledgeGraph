@@ -1,7 +1,14 @@
 fastapi==0.115.12
-orjson==3.10.16
-pydantic==2.11.4
+neo4j==5.28.1
+Pillow==11.1.0
+psycopg[binary]==3.2.6
+pymupdf==1.25.5
+pytesseract==0.3.13
 pydantic-settings==2.8.1
-pypdf==5.4.0
+pydantic==2.11.4
+redis==5.0.8
+rq==1.16.2
+sqlalchemy==2.0.38
+orjson==3.10.16
 python-multipart==0.0.20
 uvicorn[standard]==0.34.0

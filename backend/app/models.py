@@ -41,7 +41,7 @@ class KnowledgeEdge(BaseModel):
 class KnowledgeDocument(BaseModel):
     id: str
     title: str
-    type: Literal["demo", "pdf", "text"]
+    type: Literal["demo", "pdf", "text", "image"]
     origin: str
     imported_at: str
     page_count: int | None = None
@@ -74,7 +74,8 @@ class IngestRequest(BaseModel):
     title: str | None = None
     text: str
     origin: str = "upload"
-    source_type: Literal["text", "pdf", "demo"] = "text"
+    source_type: Literal["text", "pdf", "image", "demo"] = "text"
+    document_id: str | None = None
 
 
 class IngestResponse(BaseModel):
@@ -83,9 +84,32 @@ class IngestResponse(BaseModel):
     summary: str
 
 
+class ImportedKnowledgeBatch(BaseModel):
+    nodes: list[KnowledgeNode]
+    edges: list[KnowledgeEdge]
+    documents: list[KnowledgeDocument]
+
+
 class UploadIngestResponse(IngestResponse):
     filename: str
     page_count: int | None = None
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    document_id: str
+    filename: str
+    kind: str
+    status: Literal["queued", "running", "completed", "failed"]
+    progress: int = 0
+    summary: str | None = None
+    error: str | None = None
+
+
+class MutationResponse(BaseModel):
+    ok: bool
+    message: str
+    graph: KnowledgeGraphData | None = None
 
 
 class QARequest(BaseModel):

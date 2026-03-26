@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.core.config import get_settings
+from app.db.session import init_db
 
 settings = get_settings()
 
@@ -19,6 +20,15 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix=settings.api_v1_prefix)
+
+
+@app.on_event("startup")
+def startup() -> None:
+    try:
+        init_db()
+    except Exception:
+        # The app can still run in demo mode if the database is unavailable.
+        pass
 
 
 @app.get("/")

@@ -5,7 +5,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim().replace(/\/$/,
 type BackendKnowledgeDocument = {
   id: string;
   title: string;
-  type: 'demo' | 'pdf' | 'text';
+  type: 'demo' | 'pdf' | 'text' | 'image';
   origin: string;
   imported_at: string;
   page_count?: number | null;
@@ -39,6 +39,23 @@ type BackendIngestResponse = {
 type BackendUploadResponse = BackendIngestResponse & {
   filename: string;
   page_count?: number | null;
+};
+
+type BackendJobResponse = {
+  job_id: string;
+  document_id: string;
+  filename: string;
+  kind: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: number;
+  summary?: string | null;
+  error?: string | null;
+};
+
+type BackendMutationResponse = {
+  ok: boolean;
+  message: string;
+  graph?: BackendGraphResponse | null;
 };
 
 function ensureConfigured() {
@@ -125,7 +142,7 @@ export async function uploadBackendFile(payload: {
   file: File;
   title?: string;
   origin?: string;
-}): Promise<{ graph: KnowledgeGraphData; summary: string }> {
+}): Promise<BackendJobResponse> {
   ensureConfigured();
   const formData = new FormData();
   formData.append('file', payload.file);
@@ -145,10 +162,50 @@ export async function uploadBackendFile(payload: {
     throw new Error(detail || `Backend request failed: ${response.status} ${response.statusText}`);
   }
 
-  const payloadJson = (await response.json()) as BackendUploadResponse;
+  return response.json() as Promise<BackendJobResponse>;
+}
+
+export async function pollBackendJob(jobId: string): Promise<BackendJobResponse> {
+  return requestJson<BackendJobResponse>(`/v1/jobs/${jobId}`);
+}
+
+async function requestMutation(path: string, method: 'DELETE' | 'POST'): Promise<BackendMutationResponse> {
+  return requestJson<BackendMutationResponse>(path, { method });
+}
+
+export async function deleteBackendDocument(documentId: string): Promise<{ ok: boolean; message: string; graph?: KnowledgeGraphData }> {
+  const response = await requestMutation(`/v1/documents/${documentId}`, 'DELETE');
   return {
-    graph: normalizeGraph(payloadJson.graph),
-    summary: payloadJson.summary,
+    ok: response.ok,
+    message: response.message,
+    graph: response.graph ? normalizeGraph(response.graph) : undefined,
+  };
+}
+
+export async function restoreBackendDocument(documentId: string): Promise<{ ok: boolean; message: string; graph?: KnowledgeGraphData }> {
+  const response = await requestMutation(`/v1/documents/${documentId}/restore`, 'POST');
+  return {
+    ok: response.ok,
+    message: response.message,
+    graph: response.graph ? normalizeGraph(response.graph) : undefined,
+  };
+}
+
+export async function deleteBackendNode(nodeId: string): Promise<{ ok: boolean; message: string; graph?: KnowledgeGraphData }> {
+  const response = await requestMutation(`/v1/nodes/${nodeId}`, 'DELETE');
+  return {
+    ok: response.ok,
+    message: response.message,
+    graph: response.graph ? normalizeGraph(response.graph) : undefined,
+  };
+}
+
+export async function restoreBackendNode(nodeId: string): Promise<{ ok: boolean; message: string; graph?: KnowledgeGraphData }> {
+  const response = await requestMutation(`/v1/nodes/${nodeId}/restore`, 'POST');
+  return {
+    ok: response.ok,
+    message: response.message,
+    graph: response.graph ? normalizeGraph(response.graph) : undefined,
   };
 }
 

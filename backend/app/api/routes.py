@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from app.models import IngestRequest, QARequest, QAResponse
+from app.models import IngestRequest, JobStatusResponse, MutationResponse, QARequest, QAResponse
 from app.services.store import STORE
 
 router = APIRouter()
@@ -58,9 +58,44 @@ async def upload_document(
     origin: str = Form(default="upload"),
 ):
     try:
-        return await STORE.ingest_upload(file=file, title=title, origin=origin)
+        data = await file.read()
+        return STORE.enqueue_upload(
+            filename=file.filename or origin,
+            content_type=file.content_type,
+            data=data,
+            title=title,
+            origin=origin,
+        )
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+def get_job(job_id: str):
+    try:
+        return STORE.get_job(job_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.delete("/documents/{document_id}", response_model=MutationResponse)
+def delete_document(document_id: str):
+    return STORE.delete_document(document_id)
+
+
+@router.post("/documents/{document_id}/restore", response_model=MutationResponse)
+def restore_document(document_id: str):
+    return STORE.restore_document(document_id)
+
+
+@router.delete("/nodes/{node_id}", response_model=MutationResponse)
+def delete_node(node_id: str):
+    return STORE.delete_node(node_id)
+
+
+@router.post("/nodes/{node_id}/restore", response_model=MutationResponse)
+def restore_node(node_id: str):
+    return STORE.restore_node(node_id)
 
 
 @router.post("/qa", response_model=QAResponse)

@@ -39,6 +39,18 @@ flowchart LR
 4. Merge the release branch into `main` or `steam.main`
 5. If a fix is shared, backport it to the matching development line
 
+## GitHub PR template
+
+- Use [`.github/pull_request_template.md`](./.github/pull_request_template.md) for every PR
+- Fill out the validation and risk sections before requesting review
+- Attach screenshots for any UI changes
+
+## Release checklist
+
+- Use [`docs/release-checklist.md`](./docs/release-checklist.md) before promoting a branch
+- `dev -> qa -> main` should only happen after the checklist passes
+- `steam.dev -> steam.qa -> steam.main` should use the Steam section of the same checklist
+
 ## Notes for this project
 
 - `dev` stays close to the knowledge-graph product

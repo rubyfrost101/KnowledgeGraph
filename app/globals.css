@@ -687,6 +687,353 @@ input:focus {
   animation: steam-achievement-pop 520ms ease;
 }
 
+.steam-landing {
+  display: grid;
+  gap: 14px;
+  border-color: rgba(141, 240, 192, 0.2);
+  background:
+    radial-gradient(circle at top right, rgba(141, 240, 192, 0.14), transparent 36%),
+    linear-gradient(180deg, rgba(8, 22, 25, 0.94), rgba(7, 12, 20, 0.98));
+}
+
+.steam-landing-copy {
+  margin: 0;
+  color: #e8fff4;
+  line-height: 1.7;
+}
+
+.steam-landing-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.steam-landing-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.steam-mini-stat {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.14);
+  background: rgba(6, 15, 22, 0.56);
+}
+
+.steam-mini-stat span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.steam-mini-stat strong {
+  font-size: 1.08rem;
+  color: #f4fff8;
+}
+
+.steam-onboarding {
+  display: grid;
+  gap: 10px;
+}
+
+.steam-step {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.14);
+  background: rgba(6, 15, 22, 0.58);
+}
+
+.steam-step span {
+  color: var(--accent-3);
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.steam-step strong {
+  font-size: 0.94rem;
+}
+
+.steam-step p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+  font-size: 0.84rem;
+}
+
+.steam-campaign-list {
+  display: grid;
+  gap: 10px;
+}
+
+.steam-campaign-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.14);
+  background: linear-gradient(180deg, rgba(7, 16, 24, 0.92), rgba(8, 13, 20, 0.98));
+  color: var(--text);
+  text-align: left;
+}
+
+.steam-campaign-card.is-active {
+  border-color: rgba(141, 240, 192, 0.36);
+  background: linear-gradient(135deg, rgba(141, 240, 192, 0.12), rgba(125, 215, 255, 0.08));
+}
+
+.steam-campaign-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.steam-campaign-head span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.steam-campaign-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+  font-size: 0.84rem;
+}
+
+.steam-chapter-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.steam-chapter-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+  color: var(--text);
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.14);
+  background: rgba(6, 15, 22, 0.58);
+}
+
+.steam-chapter-card.is-active {
+  border-color: rgba(233, 184, 109, 0.34);
+  background: linear-gradient(135deg, rgba(233, 184, 109, 0.12), rgba(125, 215, 255, 0.08));
+}
+
+.steam-chapter-card.is-cleared {
+  border-color: rgba(141, 240, 192, 0.24);
+}
+
+.steam-chapter-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: rgba(141, 240, 192, 0.1);
+  color: var(--accent-3);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.steam-chapter-card strong {
+  display: block;
+  font-size: 0.94rem;
+}
+
+.steam-chapter-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+  font-size: 0.82rem;
+}
+
+.steam-chapter-state {
+  color: var(--accent-3);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.steam-adventure {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.steam-chapter-panel,
+.steam-quiz-panel,
+.steam-translation-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.steam-chapter-hero {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.16);
+  background: rgba(6, 15, 22, 0.58);
+}
+
+.steam-chapter-kicker {
+  margin: 0 0 6px;
+  color: var(--accent-3);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.steam-chapter-hero strong {
+  display: block;
+  font-size: 1.04rem;
+}
+
+.steam-chapter-hero p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.steam-chapter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.steam-language-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(141, 240, 192, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.steam-quiz-prompt {
+  margin: 0;
+  color: #eef9ff;
+  line-height: 1.65;
+}
+
+.steam-quiz-list {
+  display: grid;
+  gap: 10px;
+}
+
+.steam-quiz-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(125, 215, 255, 0.16);
+  background: rgba(8, 16, 30, 0.46);
+  color: var(--text);
+  text-align: left;
+}
+
+.steam-quiz-option.is-selected {
+  border-color: rgba(233, 184, 109, 0.34);
+}
+
+.steam-quiz-option.is-correct {
+  border-color: rgba(141, 240, 192, 0.34);
+  background: rgba(141, 240, 192, 0.08);
+}
+
+.steam-quiz-option.is-wrong {
+  border-color: rgba(255, 127, 150, 0.3);
+  background: rgba(255, 127, 150, 0.06);
+}
+
+.steam-quiz-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: rgba(125, 215, 255, 0.08);
+  color: var(--accent-2);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.steam-quiz-option strong {
+  font-size: 0.92rem;
+}
+
+.steam-quiz-result {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.16);
+  background: rgba(141, 240, 192, 0.06);
+}
+
+.steam-quiz-result p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.steam-translation-shell {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.steam-translation-card,
+.steam-locked-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(194, 210, 255, 0.12);
+  background: rgba(8, 16, 30, 0.48);
+}
+
+.steam-translation-card span {
+  color: var(--accent-3);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.steam-translation-card p,
+.steam-locked-card p,
+.steam-translation-note {
+  margin: 0;
+  color: #eef4ff;
+  line-height: 1.68;
+}
+
+.steam-translation-note {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.steam-locked-card strong {
+  color: #f3fff9;
+}
+
 @keyframes steam-enter {
   from {
     opacity: 0;
@@ -1571,8 +1918,25 @@ input:focus {
     grid-template-columns: 1fr;
   }
 
-  .steam-achievement-grid {
+  .steam-achievement-grid,
+  .steam-landing-metrics,
+  .steam-translation-shell {
     grid-template-columns: 1fr;
+  }
+
+  .steam-stage {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .steam-chapter-card {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .steam-campaign-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 

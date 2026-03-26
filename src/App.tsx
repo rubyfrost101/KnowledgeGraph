@@ -39,6 +39,32 @@ const quickQuestions = [
 
 type AppSkin = 'standard' | 'steam';
 
+type SteamCampaign = {
+  id: string;
+  title: string;
+  subtitle: string;
+  summary: string;
+  nodeIds: string[];
+  chapterIds: string[];
+};
+
+type SteamChapter = {
+  id: string;
+  title: string;
+  summary: string;
+  original: string;
+  translation: string;
+  note: string;
+  nodeIds: string[];
+};
+
+type SteamQuiz = {
+  prompt: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+};
+
 const backendConfigured = isBackendConfigured();
 
 function kindLabel(kind: KnowledgeNode['kind']): string {
@@ -186,6 +212,226 @@ function truncateText(value: string, limit = 120): string {
     return normalized;
   }
   return `${normalized.slice(0, limit).trimEnd()}…`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasChinese(value: string): boolean {
+  return /[\u4e00-\u9fff]/.test(value);
+}
+
+function looksEnglishHeavy(value: string): boolean {
+  const latinCount = (value.match(/[A-Za-z]/g) ?? []).length;
+  const chineseCount = (value.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  return latinCount >= 12 && latinCount >= chineseCount * 2;
+}
+
+function hashStable(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+const STEAM_TRANSLATION_RULES: Array<[string, string]> = [
+  ['knowledge graph', '知识图谱'],
+  ['question answering', '问答'],
+  ['multiple choice', '选择题'],
+  ['spaced review', '间隔复习'],
+  ['part of', '组成'],
+  ['depends on', '依赖'],
+  ['related to', '相关'],
+  ['same domain', '同领域'],
+  ['contrast with', '对比'],
+  ['is a', '属于'],
+  ['chapter', '章节'],
+  ['section', '小节'],
+  ['term', '术语'],
+  ['concept', '概念'],
+  ['process', '过程'],
+  ['book', '书籍'],
+  ['history', '历史'],
+  ['military', '军事'],
+  ['engineering', '工程'],
+  ['mechanical', '机械'],
+  ['translation', '翻译'],
+  ['learning', '学习'],
+  ['memory', '记忆'],
+  ['understand', '理解'],
+  ['remember', '记住'],
+  ['recall', '回忆'],
+  ['definition', '定义'],
+  ['example', '示例'],
+  ['language', '语言'],
+  ['word', '单词'],
+  ['words', '单词'],
+  ['problem', '问题'],
+  ['system', '系统'],
+  ['relation', '关系'],
+  ['relations', '关系'],
+  ['cause', '原因'],
+  ['effect', '结果'],
+  ['event', '事件'],
+  ['events', '事件'],
+  ['machine', '机器'],
+  ['structure', '结构'],
+  ['pattern', '模式'],
+  ['analysis', '分析'],
+  ['strategy', '策略'],
+  ['operation', '操作'],
+  ['function', '函数'],
+  ['component', '组件'],
+  ['components', '组件'],
+  ['workflow', '流程'],
+  ['path', '路径'],
+  ['timeline', '时间线'],
+  ['mission', '任务'],
+  ['campaign', '战役'],
+];
+
+function translateSteamText(text: string): string {
+  let output = ` ${text.trim()} `;
+  for (const [source, target] of [...STEAM_TRANSLATION_RULES].sort((left, right) => right[0].length - left[0].length)) {
+    output = output.replace(new RegExp(`\\b${escapeRegExp(source)}\\b`, 'gi'), target);
+  }
+  output = output.replace(/\s+/g, ' ').trim();
+  if (!output) {
+    return '暂无可翻译内容。';
+  }
+  return output;
+}
+
+function deriveSteamCampaignNodes(graph: KnowledgeGraphData, document: KnowledgeDocument): KnowledgeNode[] {
+  const exactMatches = graph.nodes.filter((node) => node.sources.includes(document.id));
+  if (exactMatches.length > 0) {
+    return exactMatches;
+  }
+
+  const title = canonicalText(document.title);
+  const titleKeywords = title.split(/\s+/).filter(Boolean);
+  const titleText = titleKeywords.join(' ');
+  const matches = graph.nodes.filter((node) => {
+    const haystack = canonicalText(`${node.label} ${node.category} ${node.summary} ${node.detail} ${node.aliases.join(' ')}`);
+    if (/(english|vocabulary|dictionary|lexical|language|collocation)/.test(titleText)) {
+      return /english|language|word|term|lexical/.test(haystack) || node.category === 'English' || node.kind === 'term';
+    }
+    if (/(history|war|revolution|timeline|military)/.test(titleText)) {
+      return /history|war|revolution|timeline|military/.test(haystack) || node.category === 'History';
+    }
+    if (/(medicine|medical|health|diagnosis|pathology)/.test(titleText)) {
+      return /medicine|diagnosis|health|pathogen|inflammation/.test(haystack) || node.category === 'Medicine';
+    }
+    if (/(engineering|mechanical|machine|mechanism|system)/.test(titleText)) {
+      return /engineering|mechanical|machine|system|process|component/.test(haystack) || node.kind === 'process';
+    }
+    return titleKeywords.some((keyword) => haystack.includes(keyword));
+  });
+
+  if (matches.length > 0) {
+    return Array.from(new Map(matches.map((node) => [node.id, node])).values());
+  }
+
+  return [...graph.nodes]
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 8);
+}
+
+function deriveSteamCampaigns(graph: KnowledgeGraphData): SteamCampaign[] {
+  const documents = graph.documents.filter((document) => document.status !== 'deleted');
+  if (documents.length === 0) {
+    const fallbackNodes = [...graph.nodes].sort((left, right) => right.score - left.score).slice(0, 8);
+    return [
+      {
+        id: 'demo-campaign',
+        title: '示例战役',
+        subtitle: `${fallbackNodes.length} 个知识节点`,
+        summary: '没有导入文档时，先用当前图谱体验战役流程。',
+        nodeIds: fallbackNodes.map((node) => node.id),
+        chapterIds: fallbackNodes.filter((node) => node.kind === 'book' || node.kind === 'topic' || node.kind === 'process').map((node) => node.id),
+      },
+    ];
+  }
+
+  return documents.map((document) => {
+    const campaignNodes = deriveSteamCampaignNodes(graph, document);
+    const chapterIds = campaignNodes
+      .filter((node) => node.kind === 'book' || node.kind === 'topic' || node.kind === 'process')
+      .map((node) => node.id);
+    const resolvedChapterIds = chapterIds.length > 0 ? chapterIds : campaignNodes.slice(0, 4).map((node) => node.id);
+    return {
+      id: document.id,
+      title: document.title,
+      subtitle: `${campaignNodes.length} 个知识节点 · ${resolvedChapterIds.length} 个章节`,
+      summary: document.notes || '上传这份 PDF 后，系统会把它变成可闯关的知识战役。',
+      nodeIds: campaignNodes.map((node) => node.id),
+      chapterIds: resolvedChapterIds,
+    };
+  });
+}
+
+function deriveSteamChapters(graph: KnowledgeGraphData, campaign: SteamCampaign | null): SteamChapter[] {
+  if (!campaign) {
+    return [];
+  }
+
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const chapterNodes = campaign.chapterIds
+    .map((chapterId) => nodesById.get(chapterId))
+    .filter((node): node is KnowledgeNode => Boolean(node));
+  const fallbackNodes = campaign.nodeIds
+    .map((nodeId) => nodesById.get(nodeId))
+    .filter((node): node is KnowledgeNode => Boolean(node));
+  const sourceNodes = chapterNodes.length > 0 ? chapterNodes : fallbackNodes.slice(0, 4);
+
+  return sourceNodes.map((node, index) => {
+    const detailParts = splitDetail(node.detail);
+    const rawOriginal = detailParts.narrative || node.summary || node.detail;
+    const translated = translateSteamText(rawOriginal);
+    const languageHint = looksEnglishHeavy(rawOriginal) ? '英语章节' : '通用章节';
+    const noteSource = node.aliases.find((alias) => hasChinese(alias)) || node.category;
+    return {
+      id: node.id,
+      title: node.label,
+      summary: truncateText(node.summary || rawOriginal, 110),
+      original: truncateText(rawOriginal, 180),
+      translation: truncateText(translated, 180),
+      note: `${index + 1} 号章节 · ${languageHint} · ${noteSource} · ${node.referenceIds.length > 0 ? `${node.referenceIds.length} 个锚点` : '待解锁锚点'}`,
+      nodeIds: [node.id, ...node.referenceIds].filter((value, currentIndex, array) => array.indexOf(value) === currentIndex),
+    };
+  });
+}
+
+function buildSteamQuiz(chapter: SteamChapter, chapters: SteamChapter[]): SteamQuiz {
+  const distractorSource = chapters.filter((item) => item.id !== chapter.id).map((item) => item.title);
+  const optionsPool = uniqueList([chapter.title, ...distractorSource]).slice(0, 4);
+  while (optionsPool.length < 3) {
+    optionsPool.push(`${chapter.title} 相关章节 ${optionsPool.length + 1}`);
+  }
+  const correctIndex = hashStable(chapter.id) % 3;
+  const options = [...optionsPool.slice(0, 3)];
+  const [correct] = options.splice(0, 1);
+  if (correct) {
+    options.splice(correctIndex, 0, correct);
+  }
+  return {
+    prompt: `当前关卡的核心章节是哪一个？`,
+    options,
+    correctIndex,
+    explanation: `本关聚焦「${chapter.title}」：${truncateText(chapter.summary, 90)}`,
+  };
+}
+
+function latestVisibleDocumentId(documents: KnowledgeDocument[]): string {
+  const visible = documents.filter((document) => document.status !== 'deleted');
+  const sorted = [...visible].sort((left, right) => {
+    const leftTime = new Date(left.importedAt ?? 0).getTime();
+    const rightTime = new Date(right.importedAt ?? 0).getTime();
+    return rightTime - leftTime;
+  });
+  return sorted[0]?.id ?? '';
 }
 
 type SectionSummaryParts = {
@@ -529,10 +775,22 @@ function App() {
   const [deletedDocuments, setDeletedDocuments] = useState<KnowledgeDocument[]>([]);
   const [deletedNodes, setDeletedNodes] = useState<KnowledgeNode[]>([]);
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>([]);
+  const [steamActiveCampaignId, setSteamActiveCampaignId] = useState('');
+  const [steamActiveChapterId, setSteamActiveChapterId] = useState('');
+  const [steamLanguageMode, setSteamLanguageMode] = useState<'dual' | 'original' | 'translation'>('dual');
+  const [steamSelectedOption, setSteamSelectedOption] = useState<number | null>(null);
+  const [steamClearedChapterIds, setSteamClearedChapterIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const glossaryIndex = buildGlossaryTree(graph);
   const isGlossaryView = viewMode === 'glossary';
   const isSteamSkin = appSkin === 'steam';
+  const steamCampaigns = deriveSteamCampaigns(graph);
+  const steamActiveCampaign =
+    steamCampaigns.find((campaign) => campaign.id === steamActiveCampaignId) ?? steamCampaigns[0] ?? null;
+  const steamChapters = deriveSteamChapters(graph, steamActiveCampaign);
+  const steamActiveChapter =
+    steamChapters.find((chapter) => chapter.id === steamActiveChapterId) ?? steamChapters[0] ?? null;
+  const steamQuiz = steamActiveChapter ? buildSteamQuiz(steamActiveChapter, steamChapters) : null;
 
   function buildHoverPreviewPosition(clientX: number, clientY: number): { x: number; y: number; placement: HoverPreview['placement'] } {
     const fitsRight = clientX + HOVER_PREVIEW_WIDTH + HOVER_PREVIEW_OFFSET + 16 <= window.innerWidth;
@@ -558,6 +816,36 @@ function App() {
   useEffect(() => {
     setSearchMatches(searchNode(graph, query).slice(0, 6));
   }, [graph, query]);
+
+  useEffect(() => {
+    if (!isSteamSkin) {
+      return;
+    }
+    if (!steamCampaigns.length) {
+      return;
+    }
+    setSteamActiveCampaignId((current) => {
+      if (steamCampaigns.some((campaign) => campaign.id === current)) {
+        return current;
+      }
+      return steamCampaigns[0]?.id ?? '';
+    });
+  }, [isSteamSkin, steamCampaigns]);
+
+  useEffect(() => {
+    if (!isSteamSkin || !steamActiveCampaign) {
+      return;
+    }
+    if (!steamChapters.length) {
+      return;
+    }
+    setSteamActiveChapterId((current) => {
+      if (steamChapters.some((chapter) => chapter.id === current)) {
+        return current;
+      }
+      return steamChapters[0]?.id ?? '';
+    });
+  }, [isSteamSkin, steamActiveCampaign, steamChapters]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -610,6 +898,63 @@ function App() {
   }, [bookmarkedIds]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedCampaign = window.localStorage.getItem('knowledgegraph.steam.campaign');
+    const storedChapter = window.localStorage.getItem('knowledgegraph.steam.chapter');
+    const storedLanguage = window.localStorage.getItem('knowledgegraph.steam.language');
+    const storedClears = window.localStorage.getItem('knowledgegraph.steam.cleared');
+    if (storedCampaign) {
+      setSteamActiveCampaignId(storedCampaign);
+    }
+    if (storedChapter) {
+      setSteamActiveChapterId(storedChapter);
+    }
+    if (storedLanguage === 'original' || storedLanguage === 'translation' || storedLanguage === 'dual') {
+      setSteamLanguageMode(storedLanguage);
+    }
+    if (storedClears) {
+      try {
+        const parsed = JSON.parse(storedClears);
+        if (Array.isArray(parsed)) {
+          setSteamClearedChapterIds(uniqueList(parsed.filter((item): item is string => typeof item === 'string')));
+        }
+      } catch {
+        window.localStorage.removeItem('knowledgegraph.steam.cleared');
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('knowledgegraph.steam.campaign', steamActiveCampaignId);
+  }, [steamActiveCampaignId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('knowledgegraph.steam.chapter', steamActiveChapterId);
+  }, [steamActiveChapterId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('knowledgegraph.steam.language', steamLanguageMode);
+  }, [steamLanguageMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('knowledgegraph.steam.cleared', JSON.stringify(steamClearedChapterIds));
+  }, [steamClearedChapterIds]);
+
+  useEffect(() => {
     setBookmarkedIds((current) => {
       const availableIds = new Set(graph.nodes.map((node) => node.id));
       const next = current.filter((id) => availableIds.has(id));
@@ -649,6 +994,12 @@ function App() {
     setDeletedDocuments(remoteDocuments.filter((document) => document.status === 'deleted'));
     setDeletedNodes(remoteNodes.filter((node) => Boolean(node.deletedAt)));
     setJobs(remoteJobs);
+    return {
+      remoteGraph,
+      remoteDocuments,
+      remoteNodes,
+      remoteJobs,
+    };
   }
 
   useEffect(() => {
@@ -700,6 +1051,18 @@ function App() {
   const bookmarkedNodes = bookmarkedIds
     .map((nodeId) => graph.nodes.find((node) => node.id === nodeId))
     .filter((node): node is KnowledgeNode => Boolean(node));
+  const steamCompletedChapters = steamChapters.filter((chapter) => steamClearedChapterIds.includes(chapter.id));
+  const steamCampaignProgress = steamChapters.length > 0 ? Math.round((steamCompletedChapters.length / steamChapters.length) * 100) : 0;
+  const steamQuizCorrect = steamQuiz ? steamSelectedOption === steamQuiz.correctIndex : false;
+  const steamTranslationUnlocked =
+    Boolean(steamActiveChapter) && (steamQuizCorrect || steamClearedChapterIds.includes(steamActiveChapter.id));
+  const steamHeroTitle = steamActiveCampaign ? steamActiveCampaign.title : '上传 PDF，开始战役';
+  const steamHeroSubtitle = steamActiveCampaign
+    ? steamActiveCampaign.summary
+    : '把一本 PDF 变成一个可玩、可闯关、可翻译的知识战役。';
+  const steamHeroBadge = steamActiveCampaign
+    ? `${steamCampaignProgress}% 进度 · ${steamChapters.length} 章`
+    : '等待你的第一本书';
   const steamLevel = Math.max(1, Math.ceil(graph.nodes.length / 5));
   const steamProgress = Math.min(100, (graph.nodes.length % 5) * 20);
   const steamAnchors = graph.nodes.filter((node) => node.referenceIds.length > 0).length;
@@ -818,7 +1181,14 @@ function App() {
           title: origin,
           source_type: type,
         });
-        await syncRemoteCollections();
+        const remote = await syncRemoteCollections();
+        if (isSteamSkin) {
+          const campaignId = latestVisibleDocumentId(remote.remoteGraph.documents.length > 0 ? remote.remoteGraph.documents : result.graph.documents);
+          if (campaignId) {
+            setSteamActiveCampaignId(campaignId);
+            setSteamActiveChapterId('');
+          }
+        }
         setStatus(result.summary);
       } else {
         const result = await ingestText(trimmed, origin);
@@ -833,6 +1203,13 @@ function App() {
         };
         setGraph((current) => mergeGraphData(current, payload));
         setSelectedId(result.batch.nodes[0]?.id ?? selectedId);
+        if (isSteamSkin) {
+          const campaignId = latestVisibleDocumentId(documents);
+          if (campaignId) {
+            setSteamActiveCampaignId(campaignId);
+            setSteamActiveChapterId(result.batch.nodes[0]?.id ?? '');
+          }
+        }
         setStatus(result.summary);
       }
       setAnswer(null);
@@ -874,7 +1251,14 @@ function App() {
           throw new Error(currentJob.error || '后端任务失败');
         }
 
-        await syncRemoteCollections();
+        const remote = await syncRemoteCollections();
+        if (isSteamSkin) {
+          const campaignId = latestVisibleDocumentId(remote.remoteGraph.documents);
+          if (campaignId) {
+            setSteamActiveCampaignId(campaignId);
+            setSteamActiveChapterId('');
+          }
+        }
         setStatus(currentJob.summary || '文件已导入。');
       } else {
         const { text, pageCount } = await readKnowledgeFile(file);
@@ -887,6 +1271,13 @@ function App() {
         }));
         setGraph((current) => mergeGraphData(current, { ...result.batch, documents }));
         setSelectedId(result.batch.nodes[0]?.id ?? selectedId);
+        if (isSteamSkin) {
+          const campaignId = latestVisibleDocumentId(documents);
+          if (campaignId) {
+            setSteamActiveCampaignId(campaignId);
+            setSteamActiveChapterId(result.batch.nodes[0]?.id ?? '');
+          }
+        }
         setStatus(
           pageCount
             ? `已导入 ${file.name}，解析 ${pageCount} 页，提取 ${result.batch.nodes.length} 个知识点。`
@@ -933,6 +1324,10 @@ function App() {
     setDeletedDocuments([]);
     setDeletedNodes([]);
     setBookmarkedIds([]);
+    setSteamActiveCampaignId('');
+    setSteamActiveChapterId('');
+    setSteamSelectedOption(null);
+    setSteamClearedChapterIds([]);
     setStatus('已恢复示例图谱。');
   }
 
@@ -1000,6 +1395,64 @@ function App() {
       return;
     }
     applySearchSelection(node);
+  }
+
+  function openSteamUploadPicker() {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    document.querySelector<HTMLInputElement>('.file-drop input')?.click();
+  }
+
+  function startSteamCampaign(campaignId: string) {
+    const campaign = steamCampaigns.find((item) => item.id === campaignId) ?? steamCampaigns[0] ?? null;
+    if (!campaign) {
+      return;
+    }
+    setSteamActiveCampaignId(campaign.id);
+    const firstChapterId = campaign.chapterIds[0] ?? campaign.nodeIds[0] ?? '';
+    if (firstChapterId) {
+      setSteamActiveChapterId(firstChapterId);
+      setSelectedId(firstChapterId);
+      setViewMode('graph');
+    }
+    setSteamSelectedOption(null);
+    setStatus(`已开始战役「${campaign.title}」。`);
+  }
+
+  function focusSteamChapter(chapterId: string) {
+    setSteamActiveChapterId(chapterId);
+    setSelectedId(chapterId);
+    setViewMode('graph');
+    setSteamSelectedOption(null);
+    const chapter = steamChapters.find((item) => item.id === chapterId);
+    if (chapter) {
+      setStatus(`已进入章节关卡「${chapter.title}」。`);
+    }
+  }
+
+  function answerSteamQuiz(optionIndex: number) {
+    if (!steamQuiz || !steamActiveChapter) {
+      return;
+    }
+    setSteamSelectedOption(optionIndex);
+    if (optionIndex === steamQuiz.correctIndex) {
+      setSteamClearedChapterIds((current) => uniqueList([...current, steamActiveChapter.id]));
+      setStatus(`答对了，已解锁「${steamActiveChapter.title}」的翻译卡。`);
+    } else {
+      setStatus(`还差一点，再看一下章节线索。`);
+    }
+  }
+
+  function advanceSteamChapter() {
+    if (!steamActiveChapter) {
+      return;
+    }
+    const currentIndex = steamChapters.findIndex((chapter) => chapter.id === steamActiveChapter.id);
+    const nextChapter = steamChapters[currentIndex + 1] ?? steamChapters[0] ?? null;
+    if (nextChapter) {
+      focusSteamChapter(nextChapter.id);
+    }
   }
 
   function showReferencePreview(target: KnowledgeNode, clientX: number, clientY: number) {
@@ -1417,70 +1870,175 @@ function App() {
           </section>
 
           {isSteamSkin ? (
-            <section className="card steam-hud steam-hud--enter">
-              <div className="card-head">
-                <div>
-                  <p className="card-kicker">Steam Preview</p>
-                  <h2>任务日志</h2>
-                </div>
-                <span className="steam-badge">Lv.{steamLevel}</span>
-              </div>
-              <p className="steam-mission">{steamMission}</p>
-              <div className="steam-hud-grid">
-                <article className="steam-stat">
-                  <span>探索进度</span>
-                  <strong>{steamProgress}%</strong>
-                  <div className="steam-bar">
-                    <div className="steam-bar-fill" style={{ width: `${steamProgress}%` }} />
+            <>
+              <section className="card steam-landing steam-hud--enter">
+                <div className="card-head">
+                  <div>
+                    <p className="card-kicker">Steam Mode</p>
+                    <h2>{steamHeroTitle}</h2>
                   </div>
-                </article>
-                <article className="steam-stat">
-                  <span>图鉴锚点</span>
-                  <strong>{steamAnchors}</strong>
-                  <p>可继续追溯到上级目录的节点。</p>
-                </article>
-                <article className="steam-stat">
-                  <span>连线热度</span>
-                  <strong>{steamHeat}</strong>
-                  <p>当前节点附近的关系密度。</p>
-                </article>
-                <article className="steam-stat">
-                  <span>已收集档案</span>
-                  <strong>{steamUnlockedDocs}</strong>
-                  <p>导入过的书、PDF 和笔记。</p>
-                </article>
-              </div>
-              <div className="steam-stage-list">
-                {steamStages.map((stage, index) => (
-                  <button key={stage.title} type="button" className={`steam-stage ${stage.unlocked ? 'is-unlocked' : ''}`} onClick={() => (index === 0 ? setViewMode('graph') : index === 1 ? setViewMode('glossary') : setQuestion(quickQuestions[0]))}>
-                    <span className="steam-stage-index">0{index + 1}</span>
-                    <div>
-                      <strong>{stage.title}</strong>
-                      <p>{stage.subtitle}</p>
-                    </div>
+                  <span className="steam-badge">{steamHeroBadge}</span>
+                </div>
+                <p className="steam-landing-copy">{steamHeroSubtitle}</p>
+                <div className="steam-landing-cta">
+                  <button className="primary-button" type="button" onClick={openSteamUploadPicker}>
+                    上传 PDF，开始战役
                   </button>
-                ))}
-              </div>
-              <div className="steam-achievement-grid">
-                {steamAchievements.map((achievement) => (
-                  <article key={achievement.title} className={`steam-achievement ${achievement.unlocked ? 'is-unlocked' : ''}`}>
-                    <span>{achievement.unlocked ? '已解锁' : '未解锁'}</span>
-                    <strong>{achievement.title}</strong>
-                    <p>{achievement.description}</p>
+                  <button className="ghost-button" type="button" onClick={() => setViewMode('glossary')}>
+                    查看图鉴
+                  </button>
+                </div>
+                <div className="steam-landing-metrics">
+                  <article className="steam-mini-stat">
+                    <span>探索进度</span>
+                    <strong>{steamProgress}%</strong>
                   </article>
-                ))}
-              </div>
-              <div className="steam-quest-list">
-                <button className="steam-quest" type="button" onClick={() => setViewMode('graph')}>
-                  <strong>切回图谱模式</strong>
-                  <span>继续探索节点和邻域。</span>
-                </button>
-                <button className="steam-quest" type="button" onClick={() => setViewMode('glossary')}>
-                  <strong>进入术语图鉴</strong>
-                  <span>查看目录树、标签和引用锚点。</span>
-                </button>
-              </div>
-            </section>
+                  <article className="steam-mini-stat">
+                    <span>已收集档案</span>
+                    <strong>{steamUnlockedDocs}</strong>
+                  </article>
+                  <article className="steam-mini-stat">
+                    <span>图鉴锚点</span>
+                    <strong>{steamAnchors}</strong>
+                  </article>
+                </div>
+                <div className="steam-onboarding">
+                  <article className="steam-step">
+                    <span>01</span>
+                    <strong>上传一本书</strong>
+                    <p>PDF、扫描件或图片都会被解析成可玩的知识战役。</p>
+                  </article>
+                  <article className="steam-step">
+                    <span>02</span>
+                    <strong>选择章节关卡</strong>
+                    <p>每一章都是一个关卡，先看摘要，再解锁原文和翻译卡。</p>
+                  </article>
+                  <article className="steam-step">
+                    <span>03</span>
+                    <strong>完成题目挑战</strong>
+                    <p>答对后会解锁翻译卡，并把章节收入进度条。</p>
+                  </article>
+                </div>
+                <div className="steam-campaign-list">
+                  {steamCampaigns.map((campaign) => {
+                    const isActiveCampaign = steamActiveCampaign?.id === campaign.id;
+                    return (
+                      <button
+                        key={campaign.id}
+                        type="button"
+                        className={`steam-campaign-card ${isActiveCampaign ? 'is-active' : ''}`}
+                        onClick={() => startSteamCampaign(campaign.id)}
+                      >
+                        <div className="steam-campaign-head">
+                          <strong>{campaign.title}</strong>
+                          <span>{campaign.subtitle}</span>
+                        </div>
+                        <p>{campaign.summary}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="card steam-hud steam-hud--enter">
+                <div className="card-head">
+                  <div>
+                    <p className="card-kicker">Steam Preview</p>
+                    <h2>战役日志</h2>
+                  </div>
+                  <span className="steam-badge">Lv.{steamLevel}</span>
+                </div>
+                <p className="steam-mission">{steamMission}</p>
+                <div className="steam-hud-grid">
+                  <article className="steam-stat">
+                    <span>战役进度</span>
+                    <strong>{steamCampaignProgress}%</strong>
+                    <div className="steam-bar">
+                      <div className="steam-bar-fill" style={{ width: `${steamCampaignProgress}%` }} />
+                    </div>
+                  </article>
+                  <article className="steam-stat">
+                    <span>章节关卡</span>
+                    <strong>
+                      {steamCompletedChapters.length}/{steamChapters.length}
+                    </strong>
+                    <p>完成章节即可解锁下一块翻译卡。</p>
+                  </article>
+                  <article className="steam-stat">
+                    <span>图鉴锚点</span>
+                    <strong>{steamAnchors}</strong>
+                    <p>可继续追溯到上级目录的节点。</p>
+                  </article>
+                  <article className="steam-stat">
+                    <span>连线热度</span>
+                    <strong>{steamHeat}</strong>
+                    <p>当前节点附近的关系密度。</p>
+                  </article>
+                </div>
+                <div className="steam-chapter-list">
+                  {steamChapters.length === 0 ? (
+                    <p className="muted">上传 PDF 后，这里会生成章节关卡。</p>
+                  ) : (
+                    steamChapters.map((chapter, index) => {
+                      const isActiveChapter = steamActiveChapter?.id === chapter.id;
+                      const isCleared = steamClearedChapterIds.includes(chapter.id);
+                      return (
+                        <button
+                          key={chapter.id}
+                          type="button"
+                          className={`steam-chapter-card ${isActiveChapter ? 'is-active' : ''} ${isCleared ? 'is-cleared' : ''}`}
+                          onClick={() => focusSteamChapter(chapter.id)}
+                        >
+                          <span className="steam-chapter-index">0{index + 1}</span>
+                          <div>
+                            <strong>{chapter.title}</strong>
+                            <p>{chapter.summary}</p>
+                          </div>
+                          <span className="steam-chapter-state">{isCleared ? '已通关' : '待挑战'}</span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+                <div className="steam-stage-list">
+                  {steamStages.map((stage, index) => (
+                    <button
+                      key={stage.title}
+                      type="button"
+                      className={`steam-stage ${stage.unlocked ? 'is-unlocked' : ''}`}
+                      onClick={() =>
+                        index === 0 ? setViewMode('graph') : index === 1 ? setViewMode('glossary') : setQuestion(quickQuestions[0])
+                      }
+                    >
+                      <span className="steam-stage-index">0{index + 1}</span>
+                      <div>
+                        <strong>{stage.title}</strong>
+                        <p>{stage.subtitle}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="steam-achievement-grid">
+                  {steamAchievements.map((achievement) => (
+                    <article key={achievement.title} className={`steam-achievement ${achievement.unlocked ? 'is-unlocked' : ''}`}>
+                      <span>{achievement.unlocked ? '已解锁' : '未解锁'}</span>
+                      <strong>{achievement.title}</strong>
+                      <p>{achievement.description}</p>
+                    </article>
+                  ))}
+                </div>
+                <div className="steam-quest-list">
+                  <button className="steam-quest" type="button" onClick={() => setViewMode('graph')}>
+                    <strong>切回图谱模式</strong>
+                    <span>继续探索节点和邻域。</span>
+                  </button>
+                  <button className="steam-quest" type="button" onClick={() => setViewMode('glossary')}>
+                    <strong>进入术语图鉴</strong>
+                    <span>查看目录树、标签和引用锚点。</span>
+                  </button>
+                </div>
+              </section>
+            </>
           ) : null}
 
           <section className="card task-card">
@@ -1884,6 +2442,126 @@ function App() {
                 </button>
               ) : null}
             </div>
+
+            {isSteamSkin ? (
+              <div className="steam-adventure">
+                <section className="section-block steam-chapter-panel">
+                  <h3>章节关卡</h3>
+                  {steamActiveChapter ? (
+                    <>
+                      <div className="steam-chapter-hero">
+                        <div>
+                          <p className="steam-chapter-kicker">{steamActiveCampaign?.title ?? '当前战役'}</p>
+                          <strong>{steamActiveChapter.title}</strong>
+                          <p>{steamActiveChapter.summary}</p>
+                        </div>
+                        <div className="steam-chapter-actions">
+                          <span className="pill">{steamActiveChapter.note}</span>
+                          <span className="pill">{steamTranslationUnlocked ? '翻译已解锁' : '等待答题解锁'}</span>
+                          <button className="ghost-button" type="button" onClick={advanceSteamChapter} disabled={steamChapters.length === 0}>
+                            下一章节
+                          </button>
+                        </div>
+                      </div>
+                      <div className="steam-language-toggle">
+                        <button
+                          className={`view-tab ${steamLanguageMode === 'original' ? 'is-active' : ''}`}
+                          type="button"
+                          onClick={() => setSteamLanguageMode('original')}
+                        >
+                          原文
+                        </button>
+                        <button
+                          className={`view-tab ${steamLanguageMode === 'dual' ? 'is-active' : ''}`}
+                          type="button"
+                          onClick={() => setSteamLanguageMode('dual')}
+                        >
+                          双语
+                        </button>
+                        <button
+                          className={`view-tab ${steamLanguageMode === 'translation' ? 'is-active' : ''}`}
+                          type="button"
+                          onClick={() => setSteamLanguageMode('translation')}
+                        >
+                          译文
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="muted">先在左侧上传一本 PDF 或选择一场战役。</p>
+                  )}
+                </section>
+
+                <section className="section-block steam-quiz-panel">
+                  <h3>题目闯关</h3>
+                  {steamQuiz && steamActiveChapter ? (
+                    <>
+                      <p className="steam-quiz-prompt">{steamQuiz.prompt}</p>
+                      <div className="steam-quiz-list">
+                        {steamQuiz.options.map((option, index) => {
+                          const isSelected = steamSelectedOption === index;
+                          const isCorrect = steamSelectedOption !== null && index === steamQuiz.correctIndex;
+                          const isWrong = isSelected && steamSelectedOption !== steamQuiz.correctIndex;
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              className={`steam-quiz-option ${isSelected ? 'is-selected' : ''} ${isCorrect ? 'is-correct' : ''} ${
+                                isWrong ? 'is-wrong' : ''
+                              }`}
+                              onClick={() => answerSteamQuiz(index)}
+                            >
+                              <span className="steam-quiz-index">0{index + 1}</span>
+                              <strong>{option}</strong>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {steamSelectedOption !== null ? (
+                        <div className="steam-quiz-result">
+                          <span className={`pill ${steamQuizCorrect ? 'pill-link' : ''}`}>{steamQuizCorrect ? '答对了' : '未命中'}</span>
+                          <p>{steamQuiz.explanation}</p>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="muted">选中一章后，就会生成这一关的题目。</p>
+                  )}
+                </section>
+
+                <section className="section-block steam-translation-panel">
+                  <h3>双语翻译卡</h3>
+                  {steamActiveChapter ? (
+                    steamTranslationUnlocked ? (
+                      <>
+                        <div className="steam-translation-shell">
+                          {steamLanguageMode !== 'translation' ? (
+                            <article className="steam-translation-card">
+                              <span>Original</span>
+                              <p>{steamActiveChapter.original}</p>
+                            </article>
+                          ) : null}
+                          {steamLanguageMode !== 'original' ? (
+                            <article className="steam-translation-card">
+                              <span>Translation</span>
+                              <p>{steamActiveChapter.translation}</p>
+                            </article>
+                          ) : null}
+                        </div>
+                        <p className="steam-translation-note">{steamActiveChapter.note}</p>
+                      </>
+                    ) : (
+                      <div className="steam-locked-card">
+                        <strong>翻译卡尚未解锁</strong>
+                        <p>先完成题目闯关，翻译卡就会打开。</p>
+                      </div>
+                    )
+                  ) : (
+                    <p className="muted">先启动一个战役，我们再打开这张翻译卡。</p>
+                  )}
+                </section>
+              </div>
+            ) : null}
 
             {detailNode ? (
               <>

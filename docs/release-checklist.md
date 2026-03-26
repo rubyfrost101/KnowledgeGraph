@@ -24,6 +24,7 @@ Use this checklist before promoting changes from `dev` to `qa`, or from `qa` to 
 - [ ] No open blocking issues remain
 - [ ] Release notes are ready
 - [ ] If the change affects users, tag or announce the release
+- [ ] The PR uses [`.github/PULL_REQUEST_TEMPLATE/qa-to-main.md`](../.github/PULL_REQUEST_TEMPLATE/qa-to-main.md)
 
 ## Steam release line
 

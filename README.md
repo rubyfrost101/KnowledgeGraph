@@ -45,6 +45,8 @@ The repository now uses two parallel release lines:
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full workflow and merge rules.
 
+For release promotions from `qa` to `main`, use [`.github/PULL_REQUEST_TEMPLATE/qa-to-main.md`](./.github/PULL_REQUEST_TEMPLATE/qa-to-main.md) so the merge checklist and release notes stay consistent.
+
 There is now a first backend scaffold in [`backend/`](./backend) with:
 
 - `FastAPI` app skeleton

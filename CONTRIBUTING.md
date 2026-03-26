@@ -30,6 +30,7 @@ flowchart LR
 - Validate Steam changes on `steam.qa`
 - Merge to `steam.main` only after Steam QA passes
 - Avoid direct commits to `main` and `steam.main`
+- Keep `qa -> main` promotions release-focused so the release template stays accurate
 
 ## Suggested workflow
 
@@ -44,6 +45,7 @@ flowchart LR
 - Use [`.github/pull_request_template.md`](./.github/pull_request_template.md) for every PR
 - Fill out the validation and risk sections before requesting review
 - Attach screenshots for any UI changes
+- Use [`.github/PULL_REQUEST_TEMPLATE/qa-to-main.md`](./.github/PULL_REQUEST_TEMPLATE/qa-to-main.md) for release promotion PRs from `qa` to `main`
 
 ## Release checklist
 

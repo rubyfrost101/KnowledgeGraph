@@ -206,6 +206,13 @@ This is important for language learning and technical subjects where different b
 - Use source-aware prompting so the model sees only the most relevant chunks
 - Cache results for repeated questions
 
+## Extraction improvements
+
+- Split PDFs into page-aware sections before node extraction
+- Merge repeated concepts across books with fuzzy label and alias matching
+- Prefer same-domain co-occurrence edges when no stronger relation is detected
+- Promote stronger relation types when cue words such as `is a`, `part of`, or `depends on` are present
+
 ## Deletion semantics
 
 We use soft deletion so undo remains possible:

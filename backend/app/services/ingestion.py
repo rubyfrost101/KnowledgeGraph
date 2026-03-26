@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from itertools import combinations
 from datetime import datetime, timezone
 
 from app.models import (
@@ -16,7 +17,41 @@ from app.services.normalization import canonical_text, stable_id, unique_list
 
 
 def _split_blocks(text: str) -> list[str]:
-    return [block.strip() for block in re.split(r"\n\s*\n+", text.replace("\r\n", "\n")) if block.strip()]
+    normalized = text.replace("\r\n", "\n").strip()
+    raw_blocks = [block.strip() for block in re.split(r"\n\s*\n+", normalized) if block.strip()]
+    refined: list[str] = []
+    for block in raw_blocks:
+        lines = [line.strip() for line in block.split("\n") if line.strip()]
+        current: list[str] = []
+        for line in lines:
+            if current and _looks_like_heading(line):
+                refined.append("\n".join(current).strip())
+                current = [line]
+            else:
+                current.append(line)
+        if current:
+            refined.append("\n".join(current).strip())
+    return refined
+
+
+def _looks_like_heading(line: str) -> bool:
+    stripped = line.strip().lstrip("#").strip().rstrip(":：")
+    if not stripped:
+        return False
+    if line.startswith("#"):
+        return True
+    if re.fullmatch(r"page\s*\d+", stripped, re.I):
+        return True
+    if len(stripped) > 72:
+        return False
+    if re.search(r"[。！？!?\.]$", stripped):
+        return False
+    words = stripped.split()
+    if len(words) <= 8 and stripped[0].isupper():
+        return True
+    if len(words) <= 5 and len(stripped) <= 18:
+        return True
+    return False
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -53,15 +88,15 @@ def _make_node(label: str, category: str, source_id: str, detail: str) -> Knowle
 
 
 def _relation_kind(sentence: str) -> tuple[RelationKind, str]:
-    if re.search(r"属于|是|is a|kind of|类型", sentence, re.I):
+    if re.search(r"属于|是|is a|kind of|类型|type of|instance of", sentence, re.I):
         return "is-a", "is a"
-    if re.search(r"对比|相对|反义|opposite|contrast", sentence, re.I):
+    if re.search(r"对比|相对|反义|opposite|contrast|versus|vs\.", sentence, re.I):
         return "contrast-with", "contrast"
-    if re.search(r"属于同一|同属|same domain|相关|related", sentence, re.I):
+    if re.search(r"属于同一|同属|same domain|相关|related|co-?occur|together", sentence, re.I):
         return "related-to", "related"
-    if re.search(r"组成|part of|包含|contains", sentence, re.I):
+    if re.search(r"组成|part of|包含|contains|include|includes|made of", sentence, re.I):
         return "part-of", "part of"
-    if re.search(r"依赖|depends on|required", sentence, re.I):
+    if re.search(r"依赖|depends on|required|causes|leads to|drives|triggers|influences", sentence, re.I):
         return "depends-on", "depends on"
     return "mentions", "mentions"
 
@@ -107,6 +142,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
     nodes = list(nodes_by_key.values())
     edges: list[KnowledgeEdge] = []
     for block in blocks:
+        block_mentions: list[KnowledgeNode] = []
         for sentence in _split_sentences(block):
             normalized = canonical_text(sentence)
             mentioned = [
@@ -116,20 +152,51 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                 or any(canonical_text(alias) in normalized for alias in node.aliases)
             ]
             if len(mentioned) < 2:
+                block_mentions.extend(mentioned)
                 continue
 
             kind, label = _relation_kind(sentence)
-            for index in range(len(mentioned) - 1):
-                source = mentioned[index]
-                target = mentioned[index + 1]
+            if kind == "mentions":
+                for source, target in combinations(mentioned, 2):
+                    edges.append(
+                        KnowledgeEdge(
+                            id=stable_id("edge", f"{source.id}:same-domain:{target.id}:co-occur:{document_id}"),
+                            source=source.id,
+                            target=target.id,
+                            kind="same-domain",
+                            label="co-occur",
+                            weight=0.35,
+                            sources=[document_id],
+                        )
+                    )
+            else:
+                for index in range(len(mentioned) - 1):
+                    source = mentioned[index]
+                    target = mentioned[index + 1]
+                    edges.append(
+                        KnowledgeEdge(
+                            id=stable_id("edge", f"{source.id}:{kind}:{target.id}:{label}:{document_id}"),
+                            source=source.id,
+                            target=target.id,
+                            kind=kind,
+                            label=label,
+                            weight=0.45,
+                            sources=[document_id],
+                        )
+                    )
+            block_mentions.extend(mentioned)
+
+        unique_block_mentions = list({node.id: node for node in block_mentions}.values())
+        if len(unique_block_mentions) > 2:
+            for source, target in combinations(unique_block_mentions, 2):
                 edges.append(
                     KnowledgeEdge(
-                        id=stable_id("edge", f"{source.id}:{kind}:{target.id}:{label}:{document_id}"),
+                        id=stable_id("edge", f"{source.id}:same-domain:{target.id}:section-co-occur:{document_id}"),
                         source=source.id,
                         target=target.id,
-                        kind=kind,
-                        label=label,
-                        weight=0.45,
+                        kind="same-domain",
+                        label="section co-occur",
+                        weight=0.28,
                         sources=[document_id],
                     )
                 )

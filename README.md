@@ -28,6 +28,9 @@ In short:
 - `PostgreSQL` for documents, chunks, provenance, and jobs
 - `Neo4j` for graph traversal and neighborhood search
 - `Redis` plus a worker queue for background ingestion
+- PDF text is split into page-aware sections before extraction
+- Repeated concepts are merged across books using label and alias similarity
+- Relations are inferred from cue words plus same-domain co-occurrence
 
 There is now a first backend scaffold in [`backend/`](./backend) with:
 

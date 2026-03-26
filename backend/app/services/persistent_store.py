@@ -244,9 +244,9 @@ class PersistentGraphStore:
 
     def ingest(self, request: IngestRequest) -> IngestResponse:
         document, incoming_graph, summary = ingest_text(request)
-        self._save_revision(document.id, "import", incoming_graph)
         merged = merge_graph_data(self.snapshot(), ImportedKnowledgeBatch(**incoming_graph.model_dump()))
         self._persist_snapshot(merged)
+        self._save_revision(document.id, "import", incoming_graph)
         return IngestResponse(document=document, graph=self.snapshot(), summary=summary)
 
     def enqueue_upload(self, filename: str, content_type: str | None, data: bytes, title: str | None, origin: str) -> JobStatusResponse:
@@ -353,10 +353,10 @@ class PersistentGraphStore:
             if extraction.used_ocr:
                 document_model.notes = (document_model.notes or "") + " OCR fallback used."
             self._update_job(job_id, progress=62, summary="正在合并跨书知识与去重")
-            self._save_revision(document.id, "import", incoming_graph)
             merged = merge_graph_data(self.snapshot(), ImportedKnowledgeBatch(**incoming_graph.model_dump()))
             self._update_job(job_id, progress=86, summary="正在写入图数据库与持久层")
             self._persist_snapshot(merged)
+            self._save_revision(document.id, "import", incoming_graph)
             with session_scope() as session:
                 job = session.get(GraphJobORM, job_id)
                 document_row = session.get(DocumentORM, document.id)

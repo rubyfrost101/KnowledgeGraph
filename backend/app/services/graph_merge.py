@@ -78,6 +78,8 @@ def _node_similarity(left: KnowledgeNode, right: KnowledgeNode) -> float:
         combined += 0.04
     if any(canonical_text(alias) in left_label for alias in right.aliases):
         combined += 0.04
+    if left.kind in {"book", "topic"} or right.kind in {"book", "topic"}:
+        combined = min(combined, 0.84)
     return min(combined, 1.0)
 
 

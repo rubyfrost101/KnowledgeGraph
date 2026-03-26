@@ -531,6 +531,32 @@ input:focus {
   font-size: 0.82rem;
 }
 
+.view-toggle {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  gap: 4px;
+}
+
+.view-tab {
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.view-tab.is-active {
+  color: #18202f;
+  background: linear-gradient(135deg, rgba(240, 201, 127, 0.98), rgba(248, 225, 165, 0.98));
+}
+
+.view-tab:hover {
+  transform: translateY(-1px);
+}
+
 .graph-shell {
   overflow: hidden;
   border-radius: 26px;
@@ -538,6 +564,10 @@ input:focus {
   background:
     radial-gradient(circle at 50% 50%, rgba(125, 215, 255, 0.08), transparent 40%),
     linear-gradient(180deg, rgba(9, 15, 28, 0.72), rgba(7, 10, 19, 0.96));
+}
+
+.graph-shell.is-glossary {
+  padding: 18px;
 }
 
 .graph-svg {
@@ -623,6 +653,169 @@ input:focus {
 
 .node-concept {
   fill: #8a7cff;
+}
+
+.glossary-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.glossary-tree {
+  display: grid;
+  gap: 14px;
+}
+
+.glossary-tree-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.glossary-tree-head h3,
+.glossary-orphans h4 {
+  margin: 0;
+  font-family: "Iowan Old Style", "Baskerville", "Songti SC", serif;
+}
+
+.glossary-tree-head p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.glossary-tree-body {
+  display: grid;
+  gap: 14px;
+}
+
+.glossary-section {
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.035);
+  overflow: hidden;
+}
+
+.glossary-section[data-depth="0"] {
+  border-color: rgba(125, 215, 255, 0.2);
+}
+
+.glossary-section[data-depth="1"] {
+  margin-left: 14px;
+}
+
+.glossary-section[data-depth="2"] {
+  margin-left: 28px;
+}
+
+.glossary-section[data-depth="3"] {
+  margin-left: 42px;
+}
+
+.glossary-section-head {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
+  color: var(--text);
+  text-align: left;
+}
+
+.glossary-section-title {
+  display: grid;
+  gap: 4px;
+}
+
+.glossary-section-title strong {
+  font-size: 1rem;
+}
+
+.glossary-section-title span,
+.glossary-section-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.glossary-section-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.glossary-section-body {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 16px;
+}
+
+.glossary-section-summary p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.glossary-item-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.glossary-item {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.glossary-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.glossary-item-head strong {
+  font-size: 0.92rem;
+}
+
+.glossary-item-head span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.glossary-item p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.glossary-item-citations {
+  display: grid;
+  gap: 6px;
+}
+
+.glossary-child-list {
+  display: grid;
+  gap: 12px;
+}
+
+.glossary-orphans {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.glossary-orphans h4 {
+  font-size: 0.98rem;
 }
 
 .tone-related {
@@ -761,6 +954,12 @@ input:focus {
 
   .detail-panel {
     position: static;
+  }
+
+  .glossary-section[data-depth="1"],
+  .glossary-section[data-depth="2"],
+  .glossary-section[data-depth="3"] {
+    margin-left: 0;
   }
 }
 

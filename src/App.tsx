@@ -5,7 +5,7 @@ import { answerQuestion, collectNeighborhood, layoutGraph, mergeGraphData, searc
 import { ingestText } from './lib/ingest';
 import { readKnowledgeFile } from './lib/files';
 import { demoGraph } from './lib/sampleData';
-import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeGraphData, KnowledgeJob, KnowledgeNode } from './types';
+import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeEdge, KnowledgeGraphData, KnowledgeJob, KnowledgeNode } from './types';
 import {
   askBackendQuestion,
   deleteBackendDocument,
@@ -160,6 +160,113 @@ function mergeJobs(current: KnowledgeJob[], incoming: KnowledgeJob): KnowledgeJo
   });
 }
 
+function splitDetail(detail: string): { narrative: string; citations: string[] } {
+  const lines = detail
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const citations = lines.filter((line) => line.startsWith('引用：') || line.startsWith('原句：'));
+  const narrative = lines.filter((line) => !line.startsWith('引用：') && !line.startsWith('原句：')).join(' ');
+  return {
+    narrative,
+    citations,
+  };
+}
+
+function isSectionNode(node: KnowledgeNode): boolean {
+  return node.kind === 'book' || node.kind === 'topic';
+}
+
+type GlossaryTreeNode = {
+  node: KnowledgeNode;
+  children: GlossaryTreeNode[];
+  items: KnowledgeNode[];
+};
+
+function buildGlossaryTree(graph: KnowledgeGraphData): { roots: GlossaryTreeNode[]; orphans: KnowledgeNode[] } {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const sectionParentById = new Map<string, string>();
+  const sectionChildrenById = new Map<string, Set<string>>();
+  const itemsBySectionId = new Map<string, Set<string>>();
+  const attachedItemIds = new Set<string>();
+
+  for (const edge of graph.edges) {
+    if (edge.kind !== 'part-of') {
+      continue;
+    }
+    const source = nodesById.get(edge.source);
+    const target = nodesById.get(edge.target);
+    if (!source || !target) {
+      continue;
+    }
+    if (isSectionNode(source) && isSectionNode(target)) {
+      sectionParentById.set(source.id, target.id);
+      const children = sectionChildrenById.get(target.id) ?? new Set<string>();
+      children.add(source.id);
+      sectionChildrenById.set(target.id, children);
+      continue;
+    }
+    if (!isSectionNode(source) && isSectionNode(target)) {
+      const items = itemsBySectionId.get(target.id) ?? new Set<string>();
+      items.add(source.id);
+      itemsBySectionId.set(target.id, items);
+      attachedItemIds.add(source.id);
+    }
+  }
+
+  const sectionDepthCache = new Map<string, number>();
+  const depthOf = (sectionId: string): number => {
+    const cached = sectionDepthCache.get(sectionId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const parentId = sectionParentById.get(sectionId);
+    const depth = parentId ? depthOf(parentId) + 1 : 0;
+    sectionDepthCache.set(sectionId, depth);
+    return depth;
+  };
+  for (const section of graph.nodes.filter(isSectionNode)) {
+    depthOf(section.id);
+  }
+
+  const buildNode = (sectionId: string): GlossaryTreeNode | null => {
+    const node = nodesById.get(sectionId);
+    if (!node) {
+      return null;
+    }
+    const childIds = Array.from(sectionChildrenById.get(sectionId) ?? []).sort((left, right) => {
+      const leftNode = nodesById.get(left);
+      const rightNode = nodesById.get(right);
+      return (leftNode?.label ?? left).localeCompare(rightNode?.label ?? right, 'zh-Hans-CN');
+    });
+    const children = childIds.map((childId) => buildNode(childId)).filter((child): child is GlossaryTreeNode => child !== null);
+    const itemIds = Array.from(itemsBySectionId.get(sectionId) ?? []).sort((left, right) => {
+      const leftNode = nodesById.get(left);
+      const rightNode = nodesById.get(right);
+      return (leftNode?.label ?? left).localeCompare(rightNode?.label ?? right, 'zh-Hans-CN');
+    });
+    const items = itemIds
+      .map((itemId) => nodesById.get(itemId))
+      .filter((item): item is KnowledgeNode => Boolean(item));
+    return {
+      node,
+      children,
+      items,
+    };
+  };
+
+  const roots = graph.nodes
+    .filter((node) => isSectionNode(node) && !sectionParentById.has(node.id))
+    .sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'))
+    .map((node) => buildNode(node.id))
+    .filter((node): node is GlossaryTreeNode => node !== null);
+
+  const orphanItems = graph.nodes.filter((node) => !isSectionNode(node) && !attachedItemIds.has(node.id));
+  const orphans = orphanItems.filter((node) => node.kind === 'term' || node.kind === 'concept' || node.kind === 'process');
+
+  return { roots, orphans };
+}
+
 function App() {
   const [graph, setGraph] = useState<KnowledgeGraphData>(demoGraph);
   const [selectedId, setSelectedId] = useState<string>(demoGraph.nodes[0]?.id ?? '');
@@ -172,11 +279,14 @@ function App() {
   const [answer, setAnswer] = useState<KnowledgeAnswer | null>(null);
   const [status, setStatus] = useState('准备就绪，先试试示例图谱。');
   const [importTextValue, setImportTextValue] = useState('');
+  const [viewMode, setViewMode] = useState<'graph' | 'glossary'>('graph');
   const [searchMatches, setSearchMatches] = useState<KnowledgeNode[]>([]);
+  const [expandedGlossaryIds, setExpandedGlossaryIds] = useState<string[]>([]);
   const [jobs, setJobs] = useState<KnowledgeJob[]>([]);
   const [deletedDocuments, setDeletedDocuments] = useState<KnowledgeDocument[]>([]);
   const [deletedNodes, setDeletedNodes] = useState<KnowledgeNode[]>([]);
   const [busy, setBusy] = useState(false);
+  const glossaryModel = buildGlossaryTree(graph);
 
   useEffect(() => {
     const selectedExists = graph.nodes.some((node) => node.id === selectedId);
@@ -190,6 +300,21 @@ function App() {
   useEffect(() => {
     setSearchMatches(searchNode(graph, query).slice(0, 6));
   }, [graph, query]);
+
+  useEffect(() => {
+    if (viewMode !== 'glossary') {
+      return;
+    }
+    if (glossaryModel.roots.length === 0) {
+      return;
+    }
+    setExpandedGlossaryIds((current) => {
+      if (current.length > 0) {
+        return current;
+      }
+      return glossaryModel.roots.map((root) => root.node.id);
+    });
+  }, [graph, viewMode]);
 
   async function syncRemoteCollections() {
     const [remoteGraph, remoteDocuments, remoteNodes, remoteJobs] = await Promise.all([
@@ -376,6 +501,8 @@ function App() {
     setQuery('');
     setQuestion('');
     setAnswer(null);
+    setViewMode('graph');
+    setExpandedGlossaryIds([]);
     setJobs([]);
     setDeletedDocuments([]);
     setDeletedNodes([]);
@@ -386,6 +513,18 @@ function App() {
     setSelectedId(node.id);
     setQuery(node.label);
     setStatus(`已聚焦到“${node.label}”。`);
+  }
+
+  function toggleGlossarySection(sectionId: string) {
+    setExpandedGlossaryIds((current) =>
+      current.includes(sectionId) ? current.filter((id) => id !== sectionId) : [...current, sectionId],
+    );
+  }
+
+  function focusGlossaryNode(node: KnowledgeNode) {
+    setSelectedId(node.id);
+    setViewMode('glossary');
+    setStatus(`已在术语表中定位到“${node.label}”。`);
   }
 
   async function applyDocumentMutation(documentId: string, action: 'delete' | 'restore') {
@@ -419,6 +558,77 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function renderGlossarySection(section: GlossaryTreeNode, depth = 0) {
+    const isOpen = depth === 0 || expandedGlossaryIds.includes(section.node.id);
+    const detailParts = splitDetail(section.node.detail);
+    return (
+      <div key={section.node.id} className="glossary-section" data-depth={depth}>
+        <button
+          className="glossary-section-head"
+          type="button"
+          onClick={() => {
+            toggleGlossarySection(section.node.id);
+            focusGlossaryNode(section.node);
+          }}
+        >
+          <div className="glossary-section-title">
+            <strong>{section.node.label}</strong>
+            <span>
+              {kindLabel(section.node.kind)} · {section.children.length} 小节 · {section.items.length} 条术语
+            </span>
+          </div>
+          <div className="glossary-section-meta">
+            <span>{isOpen ? '收起' : '展开'}</span>
+            <span>{detailParts.citations.length > 0 ? '含引用' : '无引用'}</span>
+          </div>
+        </button>
+
+        {isOpen ? (
+          <div className="glossary-section-body">
+            <div className="glossary-section-summary">
+              <p>{detailParts.narrative || section.node.summary}</p>
+            </div>
+
+            {section.items.length > 0 ? (
+              <div className="glossary-item-grid">
+                {section.items.map((item) => {
+                  const itemParts = splitDetail(item.detail);
+                  const evidence = itemParts.citations.length > 0 ? itemParts.citations : [];
+                  return (
+                    <button key={item.id} className="glossary-item" type="button" onClick={() => focusGlossaryNode(item)}>
+                      <div className="glossary-item-head">
+                        <strong>{item.label}</strong>
+                        <span>{kindLabel(item.kind)}</span>
+                      </div>
+                      <p>{itemParts.narrative || item.summary}</p>
+                      {evidence.length > 0 ? (
+                        <div className="glossary-item-citations">
+                          {evidence.slice(0, 2).map((citation) => (
+                            <span key={citation} className="citation">
+                              {citation}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="muted">这一节下还没有抽取到术语。</p>
+            )}
+
+            {section.children.length > 0 ? (
+              <div className="glossary-child-list">
+                {section.children.map((child) => renderGlossarySection(child, depth + 1))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -731,104 +941,170 @@ function App() {
           <div className="canvas-toolbar">
             <div>
               <p className="card-kicker">Graph</p>
-              <h2>{selectedLayoutNode ? selectedLayoutNode.label : '选择一个知识点'}</h2>
+              <h2>{viewMode === 'glossary' ? '术语表' : selectedLayoutNode ? selectedLayoutNode.label : '选择一个知识点'}</h2>
             </div>
-            <div className="toolbar-badges">
-              <span>{selectedNode ? kindLabel(selectedNode.kind) : '无选中'}</span>
-              <span>{selectedNode?.category ?? '待聚焦'}</span>
-              <span>{backendConfigured ? '后端模式' : '本地模式'}</span>
-              <span>{busy ? '处理中' : status}</span>
+            <div className="toolbar-actions">
+              <div className="view-toggle">
+                <button
+                  className={`view-tab ${viewMode === 'graph' ? 'is-active' : ''}`}
+                  type="button"
+                  onClick={() => setViewMode('graph')}
+                >
+                  图谱
+                </button>
+                <button
+                  className={`view-tab ${viewMode === 'glossary' ? 'is-active' : ''}`}
+                  type="button"
+                  onClick={() => setViewMode('glossary')}
+                >
+                  术语表
+                </button>
+              </div>
+              <div className="toolbar-badges">
+                <span>{selectedNode ? kindLabel(selectedNode.kind) : '无选中'}</span>
+                <span>{selectedNode?.category ?? '待聚焦'}</span>
+                <span>{backendConfigured ? '后端模式' : '本地模式'}</span>
+                <span>{busy ? '处理中' : status}</span>
+              </div>
             </div>
           </div>
 
-          <div className="graph-shell">
-            <svg
-              className="graph-svg"
-              viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
-              role="img"
-              aria-label="Knowledge graph"
-            >
-              <defs>
-                <linearGradient id="edgeGradient" x1="0%" x2="100%" y1="0%" y2="0%">
-                  <stop offset="0%" stopColor="rgba(125, 150, 255, 0.08)" />
-                  <stop offset="100%" stopColor="rgba(240, 158, 100, 0.75)" />
-                </linearGradient>
-                <filter id="nodeGlow" x="-60%" y="-60%" width="220%" height="220%">
-                  <feGaussianBlur stdDeviation="8" result="blur" />
-                  <feColorMatrix
-                    in="blur"
-                    type="matrix"
-                    values="1 0 0 0 0.2 0 1 0 0 0.3 0 0 1 0 0.6 0 0 0 0.9 0"
-                  />
-                  <feMerge>
-                    <feMergeNode />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
-              </defs>
-
-              {layout.edges.map((edge) => {
-                const source = layout.nodes.find((node) => node.id === edge.source);
-                const target = layout.nodes.find((node) => node.id === edge.target);
-                if (!source || !target) {
-                  return null;
-                }
-                const active = selectedId ? edge.source === selectedId || edge.target === selectedId : false;
-                const neutral = selectedId ? !active : false;
-                return (
-                  <g key={edge.id} className={`edge-group ${neutral ? 'is-dimmed' : ''}`}>
-                    <line
-                      x1={source.x ?? 0}
-                      y1={source.y ?? 0}
-                      x2={target.x ?? 0}
-                      y2={target.y ?? 0}
-                      className={`edge-line ${relationTone(edge.kind)} ${active ? 'is-active' : ''}`}
+          <div className={`graph-shell ${viewMode === 'glossary' ? 'is-glossary' : ''}`}>
+            {viewMode === 'graph' ? (
+              <svg
+                className="graph-svg"
+                viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+                role="img"
+                aria-label="Knowledge graph"
+              >
+                <defs>
+                  <linearGradient id="edgeGradient" x1="0%" x2="100%" y1="0%" y2="0%">
+                    <stop offset="0%" stopColor="rgba(125, 150, 255, 0.08)" />
+                    <stop offset="100%" stopColor="rgba(240, 158, 100, 0.75)" />
+                  </linearGradient>
+                  <filter id="nodeGlow" x="-60%" y="-60%" width="220%" height="220%">
+                    <feGaussianBlur stdDeviation="8" result="blur" />
+                    <feColorMatrix
+                      in="blur"
+                      type="matrix"
+                      values="1 0 0 0 0.2 0 1 0 0 0.3 0 0 1 0 0.6 0 0 0 0.9 0"
                     />
-                    {active ? (
-                      <text
-                        x={((source.x ?? 0) + (target.x ?? 0)) / 2}
-                        y={((source.y ?? 0) + (target.y ?? 0)) / 2 - 6}
-                        className="edge-label"
-                      >
-                        {relationLabel(edge.kind)}
-                      </text>
-                    ) : null}
-                  </g>
-                );
-              })}
+                    <feMerge>
+                      <feMergeNode />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
 
-              {layout.nodes.map((node) => {
-                const isSelected = node.id === selectedId;
-                const isRelated = selectedId ? neighborhood?.adjacentIds.has(node.id) : true;
-                const isHovered = hoveredId === node.id;
-                const dimmed = selectedId ? !isSelected && !isRelated : false;
-                const size = isSelected ? 34 : node.score > 2 ? 28 : 22;
-                return (
-                  <g
-                    key={node.id}
-                    transform={`translate(${node.x ?? 0}, ${node.y ?? 0})`}
-                    className={`graph-node ${dimmed ? 'is-dimmed' : ''} ${isHovered ? 'is-hovered' : ''} ${isSelected ? 'is-selected' : ''}`}
-                    onClick={() => setSelectedId(node.id)}
-                    onMouseEnter={() => setHoveredId(node.id)}
-                    onMouseLeave={() => setHoveredId(null)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        setSelectedId(node.id);
-                      }
-                    }}
-                  >
-                    <circle r={size} className={`node-core ${nodeTone(node.kind)}`} filter={isSelected ? 'url(#nodeGlow)' : undefined} />
-                    <circle r={size + 9} className="node-halo" />
-                    <text className="node-label" y={size + 24}>
-                      {node.label}
-                    </text>
-                    <title>{node.summary}</title>
-                  </g>
-                );
-              })}
-            </svg>
+                {layout.edges.map((edge) => {
+                  const source = layout.nodes.find((node) => node.id === edge.source);
+                  const target = layout.nodes.find((node) => node.id === edge.target);
+                  if (!source || !target) {
+                    return null;
+                  }
+                  const active = selectedId ? edge.source === selectedId || edge.target === selectedId : false;
+                  const neutral = selectedId ? !active : false;
+                  return (
+                    <g key={edge.id} className={`edge-group ${neutral ? 'is-dimmed' : ''}`}>
+                      <line
+                        x1={source.x ?? 0}
+                        y1={source.y ?? 0}
+                        x2={target.x ?? 0}
+                        y2={target.y ?? 0}
+                        className={`edge-line ${relationTone(edge.kind)} ${active ? 'is-active' : ''}`}
+                      />
+                      {active ? (
+                        <text
+                          x={((source.x ?? 0) + (target.x ?? 0)) / 2}
+                          y={((source.y ?? 0) + (target.y ?? 0)) / 2 - 6}
+                          className="edge-label"
+                        >
+                          {relationLabel(edge.kind)}
+                        </text>
+                      ) : null}
+                    </g>
+                  );
+                })}
+
+                {layout.nodes.map((node) => {
+                  const isSelected = node.id === selectedId;
+                  const isRelated = selectedId ? neighborhood?.adjacentIds.has(node.id) : true;
+                  const isHovered = hoveredId === node.id;
+                  const dimmed = selectedId ? !isSelected && !isRelated : false;
+                  const size = isSelected ? 34 : node.score > 2 ? 28 : 22;
+                  return (
+                    <g
+                      key={node.id}
+                      transform={`translate(${node.x ?? 0}, ${node.y ?? 0})`}
+                      className={`graph-node ${dimmed ? 'is-dimmed' : ''} ${isHovered ? 'is-hovered' : ''} ${isSelected ? 'is-selected' : ''}`}
+                      onClick={() => setSelectedId(node.id)}
+                      onMouseEnter={() => setHoveredId(node.id)}
+                      onMouseLeave={() => setHoveredId(null)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          setSelectedId(node.id);
+                        }
+                      }}
+                    >
+                      <circle r={size} className={`node-core ${nodeTone(node.kind)}`} filter={isSelected ? 'url(#nodeGlow)' : undefined} />
+                      <circle r={size + 9} className="node-halo" />
+                      <text className="node-label" y={size + 24}>
+                        {node.label}
+                      </text>
+                      <title>{node.summary}</title>
+                    </g>
+                  );
+                })}
+              </svg>
+            ) : (
+              <div className="glossary-shell">
+                <div className="glossary-tree">
+                  <div className="glossary-tree-head">
+                    <div>
+                      <h3>目录树</h3>
+                      <p>
+                        {glossaryModel.roots.length} 个章节根 · {glossaryModel.orphans.length} 条未归类术语
+                      </p>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => setExpandedGlossaryIds(glossaryModel.roots.map((root) => root.node.id))}
+                    >
+                      展开根目录
+                    </button>
+                  </div>
+                  <div className="glossary-tree-body">
+                    {glossaryModel.roots.length === 0 ? (
+                      <p className="muted">暂无可展开的目录树，先导入一本带章节的文档。</p>
+                    ) : (
+                      glossaryModel.roots.map((root) => renderGlossarySection(root))
+                    )}
+                    {glossaryModel.orphans.length > 0 ? (
+                      <div className="glossary-orphans">
+                        <h4>未归类术语</h4>
+                        <div className="glossary-item-grid">
+                          {glossaryModel.orphans.map((item) => {
+                            const itemParts = splitDetail(item.detail);
+                            return (
+                              <button key={item.id} className="glossary-item" type="button" onClick={() => focusGlossaryNode(item)}>
+                                <div className="glossary-item-head">
+                                  <strong>{item.label}</strong>
+                                  <span>{kindLabel(item.kind)}</span>
+                                </div>
+                                <p>{itemParts.narrative || item.summary}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </section>
 

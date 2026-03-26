@@ -23,6 +23,14 @@ class _ParsedTerm:
     detail: str
 
 
+@dataclass(slots=True)
+class _SectionContext:
+    node: KnowledgeNode
+    level: int
+    parent_id: str | None
+    breadcrumb: list[str]
+
+
 def _split_blocks(text: str) -> list[str]:
     normalized = text.replace("\r\n", "\n").strip()
     raw_blocks = [block.strip() for block in re.split(r"\n\s*\n+", normalized) if block.strip()]
@@ -46,6 +54,10 @@ def _looks_like_heading(line: str) -> bool:
     if not stripped:
         return False
     if line.startswith("#"):
+        return True
+    if re.fullmatch(r".+?\s*\.{2,}\s*\d+(?:\s*)", stripped):
+        return True
+    if re.fullmatch(r"\d+(?:\.\d+)*\s+.+?\s+\d+", stripped) and len(stripped) <= 96:
         return True
     if re.fullmatch(r"(page|chapter|section|part)\s*\d+(?:\.\d+)*", stripped, re.I):
         return True
@@ -72,8 +84,41 @@ def _is_page_marker(line: str) -> bool:
     return bool(re.fullmatch(r"page\s*\d+", stripped, re.I))
 
 
+def _heading_level(line: str) -> int | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    if stripped.startswith("#"):
+        return min(stripped.count("#"), 4)
+    if re.search(r"\.{2,}\s*\d+\s*$", stripped):
+        prefix = re.sub(r"\s*\.{2,}\s*\d+\s*$", "", stripped).strip()
+        if re.match(r"^\d+(?:\.\d+)*\s+", prefix):
+            return min(prefix.split()[0].count(".") + 1, 4)
+        return 2
+    if re.fullmatch(r"(chapter|part)\s*\d+(?:\.\d+)*\s*(?:[:：].*)?", stripped, re.I):
+        return 1
+    if re.fullmatch(r"(section|subsection)\s*\d+(?:\.\d+)*\s*(?:[:：].*)?", stripped, re.I):
+        return 2
+    if re.fullmatch(r"第[一二三四五六七八九十百千0-9]+[章节部分篇].*", stripped):
+        return 1
+    if re.fullmatch(r"[IVXLC]+\.\s+.*", stripped):
+        return 1
+
+    numeric_match = re.match(r"^(\d+(?:\.\d+){0,3})\s+(.+)$", stripped)
+    if numeric_match:
+        number = numeric_match.group(1)
+        return min(number.count(".") + 1, 4)
+
+    if _looks_like_heading(line):
+        return 3
+    return None
+
+
 def _normalize_heading_label(line: str) -> str:
     cleaned = line.strip().lstrip("#").strip().rstrip(":：")
+    cleaned = re.sub(r"\s*\.{2,}\s*\d+\s*$", "", cleaned)
+    cleaned = re.sub(r"\s+\d+\s*$", "", cleaned)
     cleaned = re.sub(r"^(chapter|section|part)\s*\d+(?:\.\d+)*\s*[-–—:：]?\s*", "", cleaned, flags=re.I)
     cleaned = re.sub(r"^page\s*\d+\s*[-–—:：]?\s*", "", cleaned, flags=re.I)
     cleaned = re.sub(r"^第[一二三四五六七八九十百千0-9]+[章节部分篇]\s*", "", cleaned)
@@ -92,6 +137,14 @@ def _append_detail(existing: str, incoming: str) -> str:
     if not existing_text:
         return incoming_text
     return "\n\n".join([existing_text, incoming_text])
+
+
+def _append_citation(detail: str, citation: str) -> str:
+    if citation in detail:
+        return detail
+    if not detail.strip():
+        return citation
+    return f"{detail}\n\n{citation}"
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -151,6 +204,14 @@ def _parse_term_line(line: str) -> _ParsedTerm | None:
     return None
 
 
+def _citation_from_path(document_title: str, breadcrumb: list[str], line: str) -> str:
+    path_text = " / ".join(breadcrumb) if breadcrumb else document_title
+    citation = f"引用：{document_title} · {path_text}"
+    if line:
+        citation = f"{citation}\n原句：{line.strip()}"
+    return citation
+
+
 def _relation_kind(sentence: str) -> tuple[RelationKind, str]:
     if re.search(r"属于|是|is a|kind of|类型|type of|instance of", sentence, re.I):
         return "is-a", "is a"
@@ -182,33 +243,92 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
     title = request.title or _title_from_text(request.text)
     document_id = request.document_id or stable_id("doc", f"{request.origin}:{request.text[:120]}")
     blocks = _split_blocks(request.text)
-    nodes_by_key: dict[str, KnowledgeNode] = {}
+    nodes_by_id: dict[str, KnowledgeNode] = {}
+    term_nodes_by_label: dict[str, KnowledgeNode] = {}
+    sections_by_key: dict[str, KnowledgeNode] = {}
+    relation_edges: list[KnowledgeEdge] = []
+    root_node = KnowledgeNode(
+        id=stable_id("node", f"{document_id}:book"),
+        label=title,
+        kind="book",
+        category=_category_from_text(title),
+        summary=f"{title} 的目录根",
+        detail=f"文档来源：{request.origin}\n\n这是这份导入的目录根节点。",
+        aliases=unique_list([title, *_extract_aliases(request.text)]),
+        sources=[document_id],
+        score=1.0,
+    )
+    nodes_by_id[root_node.id] = root_node
+    sections_by_key[f"root::{canonical_text(title)}"] = root_node
+    section_stack: list[_SectionContext] = [_SectionContext(node=root_node, level=0, parent_id=None, breadcrumb=[root_node.label])]
     section_anchor_count = 0
     term_count = 0
+    block_contexts: list[_SectionContext] = []
+
+    def _current_section() -> _SectionContext:
+        return section_stack[-1]
+
+    def _register_section(label: str, level: int, block_text: str) -> _SectionContext:
+        nonlocal section_anchor_count
+        while len(section_stack) > 1 and section_stack[-1].level >= level:
+            section_stack.pop()
+        parent = _current_section()
+        section_key = f"{parent.node.id}::{canonical_text(label)}"
+        node = sections_by_key.get(section_key)
+        if node is None:
+            node = KnowledgeNode(
+                id=stable_id("node", f"{document_id}:{section_key}"),
+                label=label,
+                kind="topic",
+                category=_category_from_text(f"{label} {block_text}"),
+                summary=_split_sentences(block_text)[0][:160] if block_text else label,
+                detail=block_text.strip(),
+                aliases=_extract_aliases(block_text),
+                sources=[document_id],
+                score=1.0,
+            )
+            sections_by_key[section_key] = node
+            nodes_by_id[node.id] = node
+            relation_edges.append(
+                KnowledgeEdge(
+                    id=stable_id("edge", f"{node.id}:part-of:{parent.node.id}:section-parent:{document_id}"),
+                    source=node.id,
+                    target=parent.node.id,
+                    kind="part-of",
+                    label="part of",
+                    weight=0.92 if parent.parent_id else 0.78,
+                    sources=[document_id],
+                )
+            )
+            section_anchor_count += 1
+        else:
+            node.detail = _append_detail(node.detail, block_text.strip())
+            node.aliases = unique_list([*node.aliases, *_extract_aliases(block_text)])
+
+        context = _SectionContext(
+            node=node,
+            level=level,
+            parent_id=parent.node.id,
+            breadcrumb=[*parent.breadcrumb, node.label],
+        )
+        section_stack.append(context)
+        return context
 
     for block in blocks:
         lines = [line.strip() for line in block.split("\n") if line.strip()]
         heading = next((line for line in lines if _looks_like_heading(line) and not _is_page_marker(line)), None)
         if heading is None and lines:
             heading = next((line for line in lines if not _is_page_marker(line)), lines[0])
-        if not heading:
-            continue
 
-        cleaned = _normalize_heading_label(heading)
-        key = canonical_text(cleaned)
-        if not key:
-            continue
+        section_context = _current_section()
+        if heading:
+            level = _heading_level(heading) or 3
+            cleaned = _normalize_heading_label(heading)
+            if cleaned:
+                section_context = _register_section(cleaned, level, block.strip())
 
-        node = nodes_by_key.get(key)
-        if node is None:
-            node = _make_node(cleaned, _category_from_text(cleaned + " " + block), document_id, block.strip())
-            node.aliases = _extract_aliases(block)
-            nodes_by_key[key] = node
-            section_anchor_count += 1
-        else:
-            node.detail = _append_detail(node.detail, block.strip())
-            node.aliases = unique_list([*node.aliases, *_extract_aliases(block)])
-
+        block_contexts.append(section_context)
+        current_breadcrumb = list(section_context.breadcrumb)
         for line in lines:
             parsed = _parse_term_line(line)
             if parsed is None:
@@ -216,38 +336,72 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             term_key = canonical_text(parsed.label)
             if not term_key:
                 continue
-            existing = nodes_by_key.get(term_key)
+            citation = _citation_from_path(title, current_breadcrumb, line)
+            existing = term_nodes_by_label.get(term_key)
             if existing is None:
-                term_node = _make_node(
-                    parsed.label,
-                    _category_from_text(f"{parsed.label} {parsed.detail}"),
-                    document_id,
-                    parsed.detail,
+                term_node = KnowledgeNode(
+                    id=stable_id("node", f"{document_id}:{term_key}"),
+                    label=parsed.label,
+                    kind=_infer_kind(parsed.label),
+                    category=_category_from_text(f"{parsed.label} {parsed.detail}"),
+                    summary=_split_sentences(parsed.detail)[0][:160],
+                    detail=_append_citation(parsed.detail, citation),
+                    aliases=unique_list([parsed.label, *_extract_aliases(parsed.label), *_extract_aliases(parsed.detail)]),
+                    sources=[document_id],
+                    score=1.0,
                 )
-                term_node.aliases = _extract_aliases(f"{parsed.label} {parsed.detail}")
-                nodes_by_key[term_key] = term_node
+                term_nodes_by_label[term_key] = term_node
+                nodes_by_id[term_node.id] = term_node
                 term_count += 1
+                relation_edges.append(
+                    KnowledgeEdge(
+                        id=stable_id("edge", f"{term_node.id}:part-of:{section_context.node.id}:term-anchor:{document_id}"),
+                        source=term_node.id,
+                        target=section_context.node.id,
+                        kind="part-of",
+                        label="part of",
+                        weight=0.74,
+                        sources=[document_id],
+                    )
+                )
             else:
-                existing.detail = _append_detail(existing.detail, parsed.detail)
-                existing.aliases = unique_list([*existing.aliases, *_extract_aliases(parsed.label), *_extract_aliases(parsed.detail)])
+                existing.detail = _append_citation(_append_detail(existing.detail, parsed.detail), citation)
+                existing.aliases = unique_list([*existing.aliases, parsed.label, *_extract_aliases(parsed.label), *_extract_aliases(parsed.detail)])
+                existing.sources = unique_list([*existing.sources, document_id])
+                if existing.id == section_context.node.id:
+                    continue
+                relation_edges.append(
+                    KnowledgeEdge(
+                        id=stable_id("edge", f"{existing.id}:part-of:{section_context.node.id}:term-anchor:{document_id}"),
+                        source=existing.id,
+                        target=section_context.node.id,
+                        kind="part-of",
+                        label="part of",
+                        weight=0.7,
+                        sources=[document_id],
+                    )
+                )
 
-    if not nodes_by_key:
+    if len(nodes_by_id) == 0:
         fallback_label = title
-        nodes_by_key[canonical_text(fallback_label)] = _make_node(fallback_label, _category_from_text(fallback_label), document_id, request.text)
+        fallback_node = KnowledgeNode(
+            id=stable_id("node", f"{document_id}:{fallback_label}"),
+            label=fallback_label,
+            kind="topic",
+            category=_category_from_text(fallback_label),
+            summary=_split_sentences(request.text)[0][:160],
+            detail=request.text,
+            aliases=unique_list([fallback_label, *_extract_aliases(request.text)]),
+            sources=[document_id],
+            score=1.0,
+        )
+        nodes_by_id[fallback_node.id] = fallback_node
 
-    nodes = list(nodes_by_key.values())
-    edges: list[KnowledgeEdge] = []
-    for block in blocks:
+    nodes = list(nodes_by_id.values())
+    edges: list[KnowledgeEdge] = [*relation_edges]
+    for block, section_context in zip(blocks, block_contexts):
         lines = [line.strip() for line in block.split("\n") if line.strip()]
-        heading = next((line for line in lines if _looks_like_heading(line) and not _is_page_marker(line)), None)
-        if heading is None and lines:
-            heading = next((line for line in lines if not _is_page_marker(line)), lines[0])
-        section_node: KnowledgeNode | None = None
-        if heading:
-            section_node = nodes_by_key.get(canonical_text(_normalize_heading_label(heading)))
-        block_mentions: list[KnowledgeNode] = []
-        if section_node is not None:
-            block_mentions.append(section_node)
+        block_mentions: list[KnowledgeNode] = [section_context.node]
         for sentence in _split_sentences(block):
             normalized = canonical_text(sentence)
             mentioned = [
@@ -292,22 +446,6 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             block_mentions.extend(mentioned)
 
         unique_block_mentions = list({node.id: node for node in block_mentions}.values())
-        if section_node is not None:
-            section_key = section_node.id
-            for node in unique_block_mentions:
-                if node.id == section_key:
-                    continue
-                edges.append(
-                    KnowledgeEdge(
-                        id=stable_id("edge", f"{node.id}:part-of:{section_key}:chapter-link:{document_id}"),
-                        source=node.id,
-                        target=section_key,
-                        kind="part-of",
-                        label="part of",
-                        weight=0.42,
-                        sources=[document_id],
-                    )
-                )
         if len(unique_block_mentions) > 2:
             for source, target in combinations(unique_block_mentions, 2):
                 edges.append(
@@ -323,7 +461,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                 )
 
     edges = _dedupe_edges(edges)
-    final_nodes = list(nodes_by_key.values())
+    final_nodes = list(nodes_by_id.values())
     nodes_count = len(final_nodes)
     document = KnowledgeDocument(
         id=document_id,
@@ -331,7 +469,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
         type=request.source_type,
         origin=request.origin,
         imported_at=datetime.now(timezone.utc).isoformat(),
-        notes=f"从文本导入，章节锚点 {section_anchor_count} 个，术语 {term_count} 个，使用章节和术语启发式解析。",
+        notes=f"从文本导入，章节锚点 {section_anchor_count} 个，术语 {term_count} 个，使用目录树和术语释义引用解析。",
     )
     graph = KnowledgeGraphData(nodes=final_nodes, edges=edges, documents=[document])
     summary = (

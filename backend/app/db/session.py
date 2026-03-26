@@ -18,7 +18,7 @@ def get_engine():
 
 @lru_cache
 def get_session_factory():
-    return sessionmaker(bind=get_engine(), autoflush=False, autocommit=False)
+    return sessionmaker(bind=get_engine(), autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 @contextmanager

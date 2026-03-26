@@ -8,11 +8,17 @@ type BackendKnowledgeDocument = {
   type: 'demo' | 'pdf' | 'text' | 'image';
   origin: string;
   imported_at: string;
+  status?: 'active' | 'queued' | 'running' | 'failed' | 'deleted';
   page_count?: number | null;
   notes?: string | null;
+  deleted_at?: string | null;
+  deleted_reason?: string | null;
 };
 
-type BackendKnowledgeNode = KnowledgeNode;
+type BackendKnowledgeNode = KnowledgeNode & {
+  deleted_at?: string | null;
+  deleted_reason?: string | null;
+};
 
 type BackendKnowledgeEdge = KnowledgeGraphData['edges'][number];
 
@@ -86,14 +92,25 @@ function normalizeDocument(document: BackendKnowledgeDocument): KnowledgeDocumen
     type: document.type,
     origin: document.origin,
     importedAt: document.imported_at,
+    status: document.status,
     pageCount: document.page_count ?? undefined,
     notes: document.notes ?? undefined,
+    deletedAt: document.deleted_at ?? undefined,
+    deletedReason: document.deleted_reason ?? undefined,
+  };
+}
+
+function normalizeNode(node: BackendKnowledgeNode): KnowledgeNode {
+  return {
+    ...node,
+    deletedAt: node.deleted_at ?? null,
+    deletedReason: node.deleted_reason ?? null,
   };
 }
 
 function normalizeGraph(graph: BackendGraphResponse): KnowledgeGraphData {
   return {
-    nodes: graph.nodes,
+    nodes: graph.nodes.map(normalizeNode),
     edges: graph.edges,
     documents: graph.documents.map(normalizeDocument),
   };
@@ -115,6 +132,18 @@ export function isBackendConfigured(): boolean {
 export async function fetchBackendGraph(): Promise<KnowledgeGraphData> {
   const graph = await requestJson<BackendGraphResponse>('/v1/graphs/default');
   return normalizeGraph(graph);
+}
+
+export async function fetchBackendDocuments(includeDeleted = false): Promise<KnowledgeDocument[]> {
+  const documents = await requestJson<BackendKnowledgeDocument[]>(
+    `/v1/documents?include_deleted=${includeDeleted ? 'true' : 'false'}`,
+  );
+  return documents.map(normalizeDocument);
+}
+
+export async function fetchBackendNodes(includeDeleted = false): Promise<KnowledgeNode[]> {
+  const nodes = await requestJson<BackendKnowledgeNode[]>(`/v1/nodes?include_deleted=${includeDeleted ? 'true' : 'false'}`);
+  return nodes.map(normalizeNode);
 }
 
 export async function ingestBackendText(payload: {

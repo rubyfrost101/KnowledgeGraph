@@ -26,6 +26,8 @@ class KnowledgeNode(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
     score: float = 1.0
+    deleted_at: str | None = None
+    deleted_reason: str | None = None
 
 
 class KnowledgeEdge(BaseModel):
@@ -44,8 +46,11 @@ class KnowledgeDocument(BaseModel):
     type: Literal["demo", "pdf", "text", "image"]
     origin: str
     imported_at: str
+    status: Literal["active", "queued", "running", "failed", "deleted"] = "active"
     page_count: int | None = None
     notes: str | None = None
+    deleted_at: str | None = None
+    deleted_reason: str | None = None
 
 
 class KnowledgeGraphData(BaseModel):

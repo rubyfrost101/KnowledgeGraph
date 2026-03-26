@@ -214,6 +214,8 @@ We use soft deletion so undo remains possible:
 - Removing a document subtracts its source id from merged nodes and edges
 - If a node or edge has no remaining sources, it is hidden via soft delete
 - Removing a concept directly also soft-deletes incident edges
+- Deleted documents and deleted nodes remain queryable through recycle-bin endpoints
+- A concept that has lost every source is only restorable after its source document is restored
 - Undoing a document import replays the saved revision and re-merges it into the graph
 - Undoing a concept deletion clears the soft-delete flag and reactivates its edges
 

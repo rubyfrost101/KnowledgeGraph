@@ -46,6 +46,7 @@ from app.services.graph_merge import merge_graph_data
 from app.services.ingestion import ingest_text
 from app.services.normalization import canonical_text, unique_list
 from app.services.qa import answer_question
+from app.services.sample_data import build_demo_graph
 
 
 def _now() -> datetime:
@@ -59,8 +60,10 @@ def _doc_to_model(row: DocumentORM) -> KnowledgeDocument:
         type=row.type,  # type: ignore[arg-type]
         origin=row.origin,
         imported_at=row.imported_at.isoformat(),
+        status=row.status,  # type: ignore[arg-type]
         page_count=row.page_count,
         notes=row.notes,
+        deleted_at=row.deleted_at.isoformat() if row.deleted_at else None,
     )
 
 
@@ -75,6 +78,8 @@ def _node_to_model(row: KnowledgeNodeORM) -> KnowledgeNode:
         aliases=list(row.aliases or []),
         sources=list(row.sources or []),
         score=row.score,
+        deleted_at=row.deleted_at.isoformat() if row.deleted_at else None,
+        deleted_reason=row.deleted_reason,
     )
 
 
@@ -158,6 +163,7 @@ class PersistentGraphStore:
         self.neo4j = Neo4jProjector()
         self.redis = Redis.from_url(settings.redis_url)
         self.queue = Queue(settings.queue_name, connection=self.redis)
+        self._seed_if_empty()
 
     def snapshot(self) -> KnowledgeGraphData:
         with session_scope() as session:
@@ -176,6 +182,22 @@ class PersistentGraphStore:
                 for row in session.scalars(select(KnowledgeEdgeORM).where(KnowledgeEdgeORM.deleted_at.is_(None))).all()
             ]
         return KnowledgeGraphData(nodes=nodes, edges=edges, documents=documents)
+
+    def list_documents(self, include_deleted: bool = False) -> list[KnowledgeDocument]:
+        with session_scope() as session:
+            query = select(DocumentORM).order_by(desc(DocumentORM.imported_at))
+            if not include_deleted:
+                query = query.where(DocumentORM.deleted_at.is_(None))
+            rows = session.scalars(query).all()
+            return [_doc_to_model(row) for row in rows]
+
+    def list_nodes(self, include_deleted: bool = False) -> list[KnowledgeNode]:
+        with session_scope() as session:
+            query = select(KnowledgeNodeORM).order_by(KnowledgeNodeORM.label.asc())
+            if not include_deleted:
+                query = query.where(KnowledgeNodeORM.deleted_at.is_(None))
+            rows = session.scalars(query).all()
+            return [_node_to_model(row) for row in rows]
 
     def node_by_id(self, node_id: str) -> KnowledgeNode | None:
         with session_scope() as session:
@@ -427,18 +449,27 @@ class PersistentGraphStore:
         return MutationResponse(ok=True, message="Node deleted", graph=self.snapshot())
 
     def restore_node(self, node_id: str) -> MutationResponse:
+        response: MutationResponse
         with session_scope() as session:
             node = session.get(KnowledgeNodeORM, node_id)
             if node is None:
                 return MutationResponse(ok=False, message="Node not found")
+            if not node.sources:
+                return MutationResponse(
+                    ok=False,
+                    message="This knowledge point has no remaining provenance. Restore the source document first.",
+                    graph=self.snapshot(),
+                )
             node.deleted_at = None
             node.deleted_reason = None
             for edge in session.scalars(select(KnowledgeEdgeORM)).all():
                 if edge.source == node_id or edge.target == node_id:
                     edge.deleted_at = None
                     edge.deleted_reason = None
+            response = MutationResponse(ok=True, message="Node restored")
         self._sync_projection()
-        return MutationResponse(ok=True, message="Node restored", graph=self.snapshot())
+        response.graph = self.snapshot()
+        return response
 
     def answer(self, request: QARequest) -> QAResponse:
         return answer_question(self.snapshot(), request)
@@ -558,6 +589,12 @@ class PersistentGraphStore:
                     row.deleted_reason = "Removed by snapshot sync"
 
         self._sync_projection(graph)
+
+    def _seed_if_empty(self) -> None:
+        with session_scope() as session:
+            has_documents = session.scalar(select(DocumentORM.id).limit(1)) is not None
+        if not has_documents:
+            self._persist_snapshot(build_demo_graph())
 
     def _sync_projection(self, graph: KnowledgeGraphData | None = None) -> None:
         try:

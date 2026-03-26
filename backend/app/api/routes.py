@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
-from app.models import IngestRequest, JobStatusResponse, MutationResponse, QARequest, QAResponse
+from app.models import (
+    IngestRequest,
+    JobStatusResponse,
+    KnowledgeDocument,
+    KnowledgeNode,
+    MutationResponse,
+    QARequest,
+    QAResponse,
+)
 from app.services.store import STORE
 
 router = APIRouter()
@@ -24,6 +32,16 @@ def get_graph(graph_id: str):
     if graph_id != "default":
         raise HTTPException(status_code=404, detail="Unknown graph")
     return STORE.snapshot()
+
+
+@router.get("/documents", response_model=list[KnowledgeDocument])
+def list_documents(include_deleted: bool = Query(default=False)):
+    return STORE.list_documents(include_deleted=include_deleted)
+
+
+@router.get("/nodes", response_model=list[KnowledgeNode])
+def list_nodes(include_deleted: bool = Query(default=False)):
+    return STORE.list_nodes(include_deleted=include_deleted)
 
 
 @router.get("/nodes/{node_id}")

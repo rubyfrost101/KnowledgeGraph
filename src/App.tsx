@@ -10,7 +10,9 @@ import {
   askBackendQuestion,
   deleteBackendDocument,
   deleteBackendNode,
+  fetchBackendDocuments,
   fetchBackendGraph,
+  fetchBackendNodes,
   ingestBackendText,
   isBackendConfigured,
   pollBackendJob,
@@ -106,6 +108,8 @@ function App() {
   const [status, setStatus] = useState('准备就绪，先试试示例图谱。');
   const [importTextValue, setImportTextValue] = useState('');
   const [searchMatches, setSearchMatches] = useState<KnowledgeNode[]>([]);
+  const [deletedDocuments, setDeletedDocuments] = useState<KnowledgeDocument[]>([]);
+  const [deletedNodes, setDeletedNodes] = useState<KnowledgeNode[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -121,6 +125,17 @@ function App() {
     setSearchMatches(searchNode(graph, query).slice(0, 6));
   }, [graph, query]);
 
+  async function syncRemoteCollections() {
+    const [remoteGraph, remoteDocuments, remoteNodes] = await Promise.all([
+      fetchBackendGraph(),
+      fetchBackendDocuments(true),
+      fetchBackendNodes(true),
+    ]);
+    setGraph(remoteGraph);
+    setDeletedDocuments(remoteDocuments.filter((document) => document.status === 'deleted'));
+    setDeletedNodes(remoteNodes.filter((node) => Boolean(node.deletedAt)));
+  }
+
   useEffect(() => {
     let active = true;
 
@@ -131,12 +146,17 @@ function App() {
 
       setStatus('正在连接后端知识库...');
       try {
-        const remoteGraph = await fetchBackendGraph();
+        const [remoteGraph, remoteDocuments, remoteNodes] = await Promise.all([
+          fetchBackendGraph(),
+          fetchBackendDocuments(true),
+          fetchBackendNodes(true),
+        ]);
         if (!active) {
           return;
         }
         setGraph(remoteGraph);
-        setSelectedId(remoteGraph.nodes[0]?.id ?? '');
+        setDeletedDocuments(remoteDocuments.filter((document) => document.status === 'deleted'));
+        setDeletedNodes(remoteNodes.filter((node) => Boolean(node.deletedAt)));
         setStatus('已连接后端知识库。');
       } catch {
         if (active) {
@@ -175,8 +195,7 @@ function App() {
           title: origin,
           source_type: type,
         });
-        setGraph(result.graph);
-        setSelectedId(result.graph.nodes[0]?.id ?? selectedId);
+        await syncRemoteCollections();
         setStatus(result.summary);
       } else {
         const result = await ingestText(trimmed, origin);
@@ -230,9 +249,7 @@ function App() {
           throw new Error(currentJob.error || '后端任务失败');
         }
 
-        const remoteGraph = await fetchBackendGraph();
-        setGraph(remoteGraph);
-        setSelectedId(remoteGraph.nodes[0]?.id ?? selectedId);
+        await syncRemoteCollections();
         setStatus(currentJob.summary || '文件已导入。');
       } else {
         const { text, pageCount } = await readKnowledgeFile(file);
@@ -285,6 +302,8 @@ function App() {
     setQuery('');
     setQuestion('');
     setAnswer(null);
+    setDeletedDocuments([]);
+    setDeletedNodes([]);
     setStatus('已恢复示例图谱。');
   }
 
@@ -301,10 +320,7 @@ function App() {
         action === 'delete'
           ? await deleteBackendDocument(documentId)
           : await restoreBackendDocument(documentId);
-      if (result.graph) {
-        setGraph(result.graph);
-        setSelectedId(result.graph.nodes[0]?.id ?? '');
-      }
+      await syncRemoteCollections();
       setStatus(result.message);
       setAnswer(null);
     } finally {
@@ -312,20 +328,17 @@ function App() {
     }
   }
 
-  async function applyNodeMutation(action: 'delete' | 'restore') {
-    if (!selectedNode) {
+  async function applyNodeMutation(action: 'delete' | 'restore', nodeId: string = selectedNode?.id ?? '') {
+    if (!nodeId) {
       return;
     }
     setBusy(true);
     try {
       const result =
         action === 'delete'
-          ? await deleteBackendNode(selectedNode.id)
-          : await restoreBackendNode(selectedNode.id);
-      if (result.graph) {
-        setGraph(result.graph);
-        setSelectedId(result.graph.nodes[0]?.id ?? '');
-      }
+          ? await deleteBackendNode(nodeId)
+          : await restoreBackendNode(nodeId);
+      await syncRemoteCollections();
       setStatus(result.message);
       setAnswer(null);
     } finally {
@@ -477,6 +490,71 @@ function App() {
                   </div>
                 ))
               )}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-head">
+              <div>
+                <p className="card-kicker">Recycle Bin</p>
+                <h2>回收站</h2>
+              </div>
+            </div>
+
+            <div className="section-block">
+              <h3>已删除文档</h3>
+              <div className="search-results">
+                {deletedDocuments.length === 0 ? (
+                  <p className="muted">暂无可恢复的文档。</p>
+                ) : (
+                  deletedDocuments.map((document) => (
+                    <div key={document.id} className="search-result">
+                      <strong>{document.title}</strong>
+                      <span>
+                        {document.type} · {document.origin}
+                      </span>
+                      <div className="actions-row">
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => applyDocumentMutation(document.id, 'restore')}
+                          disabled={busy}
+                        >
+                          恢复文档
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="section-block">
+              <h3>已删除知识点</h3>
+              <div className="search-results">
+                {deletedNodes.length === 0 ? (
+                  <p className="muted">暂无可恢复的知识点。</p>
+                ) : (
+                  deletedNodes.map((node) => (
+                    <div key={node.id} className="search-result">
+                      <strong>{node.label}</strong>
+                      <span>{node.deletedReason || '已软删除'}</span>
+                      <div className="actions-row">
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => {
+                            void applyNodeMutation('restore', node.id);
+                          }}
+                          disabled={busy || node.sources.length === 0}
+                        >
+                          {node.sources.length === 0 ? '先恢复文档' : '恢复知识点'}
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </section>
         </aside>

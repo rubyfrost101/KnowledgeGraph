@@ -25,6 +25,8 @@ export interface KnowledgeNode {
   vy?: number;
   fx?: number | null;
   fy?: number | null;
+  deletedAt?: string | null;
+  deletedReason?: string | null;
 }
 
 export interface KnowledgeEdge {
@@ -43,8 +45,11 @@ export interface KnowledgeDocument {
   type: 'demo' | 'pdf' | 'text' | 'image';
   origin: string;
   importedAt: string;
+  status?: 'active' | 'queued' | 'running' | 'failed' | 'deleted';
   pageCount?: number;
   notes?: string;
+  deletedAt?: string | null;
+  deletedReason?: string | null;
 }
 
 export interface KnowledgeGraphData {

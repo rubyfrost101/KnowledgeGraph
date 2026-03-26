@@ -7,15 +7,45 @@ services:
       - "8000:8000"
     environment:
       APP_NAME: KnowledgeGraph API
+      DATABASE_URL: postgresql+psycopg://knowledgegraph:knowledgegraph@postgres:5432/knowledgegraph
       POSTGRES_DSN: postgresql://knowledgegraph:knowledgegraph@postgres:5432/knowledgegraph
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: knowledgegraph
       REDIS_URL: redis://redis:6379/0
+      OCR_LANG: eng
+      QUEUE_NAME: knowledgegraph
     depends_on:
-      - postgres
-      - neo4j
-      - redis
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      APP_NAME: KnowledgeGraph API
+      DATABASE_URL: postgresql+psycopg://knowledgegraph:knowledgegraph@postgres:5432/knowledgegraph
+      POSTGRES_DSN: postgresql://knowledgegraph:knowledgegraph@postgres:5432/knowledgegraph
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: knowledgegraph
+      REDIS_URL: redis://redis:6379/0
+      OCR_LANG: eng
+      QUEUE_NAME: knowledgegraph
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python -m app.worker
 
   postgres:
     image: postgres:16
@@ -27,6 +57,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledgegraph -d knowledgegraph"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   neo4j:
     image: neo4j:5
@@ -38,11 +73,21 @@ services:
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p knowledgegraph 'RETURN 1'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:

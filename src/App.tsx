@@ -5,6 +5,7 @@ import { answerQuestion, collectNeighborhood, layoutGraph, mergeGraphData, searc
 import { ingestText } from './lib/ingest';
 import { readKnowledgeFile } from './lib/files';
 import { demoGraph } from './lib/sampleData';
+import { canonicalText } from './lib/normalize';
 import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeEdge, KnowledgeGraphData, KnowledgeJob, KnowledgeNode } from './types';
 import {
   askBackendQuestion,
@@ -187,6 +188,7 @@ type GlossaryTreeIndex = {
   roots: GlossaryTreeNode[];
   orphans: KnowledgeNode[];
   nodesById: Map<string, KnowledgeNode>;
+  nodesByCanonicalLabel: Map<string, KnowledgeNode[]>;
   sectionParentById: Map<string, string>;
   sectionChildrenById: Map<string, Set<string>>;
   itemsBySectionId: Map<string, Set<string>>;
@@ -195,11 +197,31 @@ type GlossaryTreeIndex = {
 
 function buildGlossaryTree(graph: KnowledgeGraphData): GlossaryTreeIndex {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const nodesByCanonicalLabel = new Map<string, KnowledgeNode[]>();
   const sectionParentById = new Map<string, string>();
   const sectionChildrenById = new Map<string, Set<string>>();
   const itemsBySectionId = new Map<string, Set<string>>();
   const itemParentById = new Map<string, string>();
   const attachedItemIds = new Set<string>();
+
+  const indexNode = (node: KnowledgeNode, value: string) => {
+    const key = canonicalText(value);
+    if (!key) {
+      return;
+    }
+    const existing = nodesByCanonicalLabel.get(key) ?? [];
+    if (existing.some((candidate) => candidate.id === node.id)) {
+      return;
+    }
+    nodesByCanonicalLabel.set(key, [...existing, node]);
+  };
+
+  for (const node of graph.nodes) {
+    indexNode(node, node.label);
+    for (const alias of node.aliases) {
+      indexNode(node, alias);
+    }
+  }
 
   for (const edge of graph.edges) {
     if (edge.kind !== 'part-of') {
@@ -275,7 +297,16 @@ function buildGlossaryTree(graph: KnowledgeGraphData): GlossaryTreeIndex {
   const orphanItems = graph.nodes.filter((node) => !isSectionNode(node) && !attachedItemIds.has(node.id));
   const orphans = orphanItems.filter((node) => node.kind === 'term' || node.kind === 'concept' || node.kind === 'process');
 
-  return { roots, orphans, nodesById, sectionParentById, sectionChildrenById, itemsBySectionId, itemParentById };
+  return {
+    roots,
+    orphans,
+    nodesById,
+    nodesByCanonicalLabel,
+    sectionParentById,
+    sectionChildrenById,
+    itemsBySectionId,
+    itemParentById,
+  };
 }
 
 function buildGlossaryTrail(
@@ -294,6 +325,35 @@ function buildGlossaryTrail(
   }
 
   return trail;
+}
+
+function resolveGlossaryCitationTarget(
+  citation: string,
+  glossaryIndex: GlossaryTreeIndex,
+  sourceNode: KnowledgeNode | null,
+): KnowledgeNode | null {
+  if (citation.startsWith('原句：')) {
+    return sourceNode;
+  }
+
+  const normalizedCitation = citation.replace(/^引用：/, '').trim();
+  const pathText = normalizedCitation.includes('·')
+    ? normalizedCitation.split('·').slice(1).join('·').trim()
+    : normalizedCitation;
+  const segments = pathText
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .reverse();
+
+  for (const segment of segments) {
+    const target = glossaryIndex.nodesByCanonicalLabel.get(canonicalText(segment))?.[0];
+    if (target) {
+      return target;
+    }
+  }
+
+  return glossaryIndex.nodesByCanonicalLabel.get(canonicalText(pathText))?.[0] ?? null;
 }
 
 function App() {
@@ -316,6 +376,7 @@ function App() {
   const [deletedNodes, setDeletedNodes] = useState<KnowledgeNode[]>([]);
   const [busy, setBusy] = useState(false);
   const glossaryIndex = buildGlossaryTree(graph);
+  const isGlossaryView = viewMode === 'glossary';
 
   useEffect(() => {
     const selectedExists = graph.nodes.some((node) => node.id === selectedId);
@@ -570,10 +631,32 @@ function App() {
     );
   }
 
+  function expandGlossaryAncestors(nodeId: string) {
+    setExpandedGlossaryIds((current) => {
+      const next = new Set(current);
+      for (const ancestorId of buildGlossaryTrail(nodeId, glossaryIndex.sectionParentById, glossaryIndex.itemParentById).slice(0, -1)) {
+        next.add(ancestorId);
+      }
+      return Array.from(next);
+    });
+  }
+
+  function scrollGlossaryNodeIntoView(nodeId: string) {
+    window.setTimeout(() => {
+      document.getElementById(`glossary-node-${nodeId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest',
+      });
+    }, 0);
+  }
+
   function focusGlossaryNode(node: KnowledgeNode) {
     setSelectedId(node.id);
     setViewMode('glossary');
+    expandGlossaryAncestors(node.id);
     setStatus(`已在术语表中定位到“${node.label}”。`);
+    scrollGlossaryNodeIntoView(node.id);
   }
 
   function focusGlossaryReference(referenceId: string) {
@@ -603,6 +686,32 @@ function App() {
             <strong>{target.label}</strong>
           </button>
         ))}
+      </div>
+    );
+  }
+
+  function renderCitationChips(citations: string[], sourceNode: KnowledgeNode | null) {
+    if (citations.length === 0) {
+      return null;
+    }
+    return (
+      <div className="citation-stack">
+        {citations.map((citation) => {
+          const target = resolveGlossaryCitationTarget(citation, glossaryIndex, sourceNode);
+          if (!target) {
+            return (
+              <div key={citation} className="citation-line">
+                <span className="citation">{citation}</span>
+              </div>
+            );
+          }
+          return (
+            <button key={citation} type="button" className="citation-line citation-button" onClick={() => focusGlossaryNode(target)}>
+              <span className="citation">{citation}</span>
+              <span className="citation-jump">跳转</span>
+            </button>
+          );
+        })}
       </div>
     );
   }
@@ -645,7 +754,12 @@ function App() {
     const detailParts = splitDetail(section.node.detail);
     const isSelected = selectedId === section.node.id;
     return (
-      <div key={section.node.id} className={`glossary-section ${isSelected ? 'is-selected' : ''}`} data-depth={depth}>
+      <div
+        key={section.node.id}
+        id={`glossary-node-${section.node.id}`}
+        className={`glossary-section ${isSelected ? 'is-selected' : ''}`}
+        data-depth={depth}
+      >
         <button
           className="glossary-section-head"
           type="button"
@@ -671,6 +785,7 @@ function App() {
             <div className="glossary-section-summary">
               <p>{detailParts.narrative || section.node.summary}</p>
               {section.node.referenceIds.length > 0 ? renderReferenceChips(section.node.referenceIds) : null}
+              {renderCitationChips(detailParts.citations, section.node)}
             </div>
 
             {section.items.length > 0 ? (
@@ -679,7 +794,11 @@ function App() {
                   const itemParts = splitDetail(item.detail);
                   const evidence = itemParts.citations.length > 0 ? itemParts.citations : [];
                   return (
-                    <article key={item.id} className="glossary-item">
+                    <article
+                      key={item.id}
+                      id={`glossary-node-${item.id}`}
+                      className={`glossary-item ${selectedId === item.id ? 'is-selected' : ''}`}
+                    >
                       <button className="glossary-item-main" type="button" onClick={() => focusGlossaryNode(item)}>
                         <div className="glossary-item-head">
                           <strong>{item.label}</strong>
@@ -688,15 +807,7 @@ function App() {
                         <p>{itemParts.narrative || item.summary}</p>
                       </button>
                       {item.referenceIds.length > 0 ? renderReferenceChips(item.referenceIds) : null}
-                      {evidence.length > 0 ? (
-                        <div className="glossary-item-citations">
-                          {evidence.slice(0, 2).map((citation) => (
-                            <span key={citation} className="citation">
-                              {citation}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
+                      {evidence.length > 0 ? renderCitationChips(evidence.slice(0, 2), item) : null}
                     </article>
                   );
                 })}
@@ -1054,7 +1165,7 @@ function App() {
             </div>
           </div>
 
-          <div className={`graph-shell ${viewMode === 'glossary' ? 'is-glossary' : ''}`}>
+          <div className={`graph-shell ${isGlossaryView ? 'is-glossary' : ''}`}>
             {viewMode === 'graph' ? (
               <svg
                 className="graph-svg"
@@ -1153,13 +1264,25 @@ function App() {
                         {glossaryIndex.roots.length} 个章节根 · {glossaryIndex.orphans.length} 条未归类术语
                       </p>
                     </div>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => setExpandedGlossaryIds(glossaryIndex.roots.map((root) => root.node.id))}
-                    >
-                      展开根目录
-                    </button>
+                    <div className="tree-head-actions">
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => setExpandedGlossaryIds(glossaryIndex.roots.map((root) => root.node.id))}
+                      >
+                        展开根目录
+                      </button>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => {
+                          setExpandedGlossaryIds([]);
+                          setStatus('已折叠目录树。');
+                        }}
+                      >
+                        折叠目录
+                      </button>
+                    </div>
                   </div>
                   <div className="glossary-tree-body">
                     {glossaryIndex.roots.length === 0 ? (
@@ -1174,7 +1297,11 @@ function App() {
                           {glossaryIndex.orphans.map((item) => {
                             const itemParts = splitDetail(item.detail);
                             return (
-                              <article key={item.id} className="glossary-item">
+                              <article
+                                key={item.id}
+                                id={`glossary-node-${item.id}`}
+                                className={`glossary-item ${selectedId === item.id ? 'is-selected' : ''}`}
+                              >
                                 <button className="glossary-item-main" type="button" onClick={() => focusGlossaryNode(item)}>
                                   <div className="glossary-item-head">
                                     <strong>{item.label}</strong>
@@ -1183,6 +1310,7 @@ function App() {
                                   <p>{itemParts.narrative || item.summary}</p>
                                 </button>
                                 {item.referenceIds.length > 0 ? renderReferenceChips(item.referenceIds) : null}
+                                {renderCitationChips(splitDetail(item.detail).citations.slice(0, 2), item)}
                               </article>
                             );
                           })}
@@ -1201,7 +1329,7 @@ function App() {
             <div className="card-head">
               <div>
                 <p className="card-kicker">Detail</p>
-                <h2>{detailNode?.label ?? (viewMode === 'glossary' ? '引用详情' : '知识点详情')}</h2>
+                <h2>{detailNode?.label ?? (isGlossaryView ? '引用详情' : '知识点详情')}</h2>
               </div>
             </div>
 
@@ -1215,7 +1343,7 @@ function App() {
                 <p className="detail-summary">{detailNode.summary}</p>
                 <p className="detail-body">{detailParts.narrative || detailNode.detail}</p>
 
-                {viewMode === 'glossary' ? (
+                {isGlossaryView ? (
                   <>
                     <div className="section-block">
                       <h3>目录路径</h3>
@@ -1252,13 +1380,7 @@ function App() {
                     <div className="section-block">
                       <h3>引用原文</h3>
                       {detailParts.citations.length > 0 ? (
-                        <div className="citation-stack">
-                          {detailParts.citations.map((citation) => (
-                            <div key={citation} className="citation-line">
-                              <span className="citation">{citation}</span>
-                            </div>
-                          ))}
-                        </div>
+                        renderCitationChips(detailParts.citations, detailNode)
                       ) : (
                         <p className="muted">这一条目前没有独立的引用原文。</p>
                       )}
@@ -1368,7 +1490,7 @@ function App() {
               </>
             ) : (
               <p className="muted">
-                {viewMode === 'glossary'
+                {isGlossaryView
                   ? '点击左侧目录树里的章节或术语，右侧会显示路径、引用锚点和摘要。'
                   : '点击图谱中的节点，右侧会显示详细解释。'}
               </p>

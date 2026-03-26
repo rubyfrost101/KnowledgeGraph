@@ -294,6 +294,10 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
         section_key = f"{parent.node.id}::{canonical_text(label)}"
         node = sections_by_key.get(section_key)
         body_text = _body_text(block_text.split("\n"))
+        parent_reference_ids = _merge_reference_ids(
+            parent.node.reference_ids,
+            [parent.node.id] if parent.node.id != root_node.id else [],
+        )
         if node is None:
             node = KnowledgeNode(
                 id=stable_id("node", f"{document_id}:{section_key}"),
@@ -304,7 +308,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                 detail=body_text or block_text.strip(),
                 aliases=_extract_aliases(block_text),
                 sources=[document_id],
-                reference_ids=[parent.node.id] if parent.node.id != root_node.id else [],
+                reference_ids=parent_reference_ids,
                 score=1.0,
             )
             sections_by_key[section_key] = node
@@ -324,7 +328,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
         else:
             node.detail = _append_detail(node.detail, body_text or block_text.strip())
             node.aliases = unique_list([*node.aliases, *_extract_aliases(block_text)])
-            node.reference_ids = _merge_reference_ids(node.reference_ids, [parent.node.id] if parent.node.id != root_node.id else [])
+            node.reference_ids = _merge_reference_ids(node.reference_ids, parent_reference_ids)
 
         context = _SectionContext(
             node=node,
@@ -361,6 +365,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             existing = term_nodes_by_label.get(term_key)
             if existing is None:
                 term_body = parsed.detail.strip()
+                term_reference_ids = _merge_reference_ids(section_context.node.reference_ids, [section_context.node.id])
                 term_node = KnowledgeNode(
                     id=stable_id("node", f"{document_id}:{term_key}"),
                     label=parsed.label,
@@ -370,7 +375,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                     detail=_append_citation(parsed.detail, citation),
                     aliases=unique_list([parsed.label, *_extract_aliases(parsed.label), *_extract_aliases(parsed.detail)]),
                     sources=[document_id],
-                    reference_ids=[section_context.node.id],
+                    reference_ids=term_reference_ids,
                     score=1.0,
                 )
                 term_nodes_by_label[term_key] = term_node
@@ -391,7 +396,11 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                 existing.detail = _append_citation(_append_detail(existing.detail, parsed.detail), citation)
                 existing.aliases = unique_list([*existing.aliases, parsed.label, *_extract_aliases(parsed.label), *_extract_aliases(parsed.detail)])
                 existing.sources = unique_list([*existing.sources, document_id])
-                existing.reference_ids = _merge_reference_ids(existing.reference_ids, [section_context.node.id])
+                existing.reference_ids = _merge_reference_ids(
+                    existing.reference_ids,
+                    section_context.node.reference_ids,
+                    [section_context.node.id],
+                )
                 if existing.id == section_context.node.id:
                     continue
                 relation_edges.append(

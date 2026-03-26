@@ -905,6 +905,36 @@ input:focus {
   top: 18px;
 }
 
+.glossary-reader {
+  display: grid;
+  gap: 14px;
+}
+
+.reader-block {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(194, 210, 255, 0.1);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.reader-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reader-head h3 {
+  margin: 0;
+}
+
+.reader-head span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
 .detail-summary {
   margin: 0 0 10px;
   font-size: 0.98rem;
@@ -916,6 +946,8 @@ input:focus {
   margin: 0;
   line-height: 1.72;
   color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .section-block {
@@ -1240,6 +1272,8 @@ body {
   border-left: 3px solid rgba(233, 184, 109, 0.52);
   border-radius: 14px;
   background: rgba(233, 184, 109, 0.08);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .detail-body {
@@ -1247,6 +1281,14 @@ body {
   padding: 14px 16px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.02);
+}
+
+.reader-summary .detail-summary {
+  margin-bottom: 0;
+}
+
+.reader-original .detail-body {
+  margin-top: 0;
 }
 
 .source-list {

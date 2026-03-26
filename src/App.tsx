@@ -1340,51 +1340,63 @@ function App() {
                   <span className="pill">{detailNode.category}</span>
                   <span className="pill">{detailNode.sources.length} 个来源标记</span>
                 </div>
-                <p className="detail-summary">{detailNode.summary}</p>
-                <p className="detail-body">{detailParts.narrative || detailNode.detail}</p>
 
                 {isGlossaryView ? (
-                  <>
-                    <div className="section-block">
-                      <h3>目录路径</h3>
-                      {glossaryTrail.length === 0 ? (
-                        <p className="muted">没有找到可追溯的路径。</p>
-                      ) : (
-                        <div className="anchor-chip-row">
-                          {glossaryTrail.map((nodeId) => {
-                            const trailNode = glossaryIndex.nodesById.get(nodeId);
-                            if (!trailNode) {
-                              return null;
-                            }
-                            return (
-                              <button
-                                key={trailNode.id}
-                                type="button"
-                                className="anchor-chip"
-                                onClick={() => focusGlossaryNode(trailNode)}
-                              >
-                                <span className="anchor-chip-kind">{kindLabel(trailNode.kind)}</span>
-                                <strong>{trailNode.label}</strong>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                  <div className="glossary-reader">
+                    <section className="reader-block reader-summary">
+                      <div className="reader-head">
+                        <h3>摘要</h3>
+                        <span>卡片式概览</span>
+                      </div>
+                      <p className="detail-summary">{detailNode.summary}</p>
+                    </section>
 
-                    <div className="section-block">
-                      <h3>引用锚点</h3>
-                      {renderReferenceChips(detailNode.referenceIds, '引用锚点')}
-                    </div>
+                    <section className="reader-block reader-original">
+                      <div className="reader-head">
+                        <h3>原文</h3>
+                        <span>可点击跳转的原句</span>
+                      </div>
+                      <p className="detail-body">{detailParts.narrative || detailNode.detail}</p>
+                      {detailParts.citations.length > 0 ? renderCitationChips(detailParts.citations, detailNode) : null}
+                    </section>
 
-                    <div className="section-block">
-                      <h3>引用原文</h3>
-                      {detailParts.citations.length > 0 ? (
-                        renderCitationChips(detailParts.citations, detailNode)
-                      ) : (
-                        <p className="muted">这一条目前没有独立的引用原文。</p>
-                      )}
-                    </div>
+                    <section className="reader-block reader-anchors">
+                      <div className="reader-head">
+                        <h3>锚点</h3>
+                        <span>目录路径与来源定位</span>
+                      </div>
+                      <div className="section-block">
+                        <h3>目录路径</h3>
+                        {glossaryTrail.length === 0 ? (
+                          <p className="muted">没有找到可追溯的路径。</p>
+                        ) : (
+                          <div className="anchor-chip-row">
+                            {glossaryTrail.map((nodeId) => {
+                              const trailNode = glossaryIndex.nodesById.get(nodeId);
+                              if (!trailNode) {
+                                return null;
+                              }
+                              return (
+                                <button
+                                  key={trailNode.id}
+                                  type="button"
+                                  className="anchor-chip"
+                                  onClick={() => focusGlossaryNode(trailNode)}
+                                >
+                                  <span className="anchor-chip-kind">{kindLabel(trailNode.kind)}</span>
+                                  <strong>{trailNode.label}</strong>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="section-block">
+                        <h3>引用锚点</h3>
+                        {renderReferenceChips(detailNode.referenceIds, '引用锚点')}
+                      </div>
+                    </section>
 
                     {glossaryChildSections.length > 0 ? (
                       <div className="section-block">
@@ -1434,9 +1446,11 @@ function App() {
                         </button>
                       </div>
                     </div>
-                  </>
+                  </div>
                 ) : (
                   <>
+                    <p className="detail-summary">{detailNode.summary}</p>
+                    <p className="detail-body">{detailParts.narrative || detailNode.detail}</p>
                     <div className="section-block">
                       <h3>与它相连的知识</h3>
                       <div className="relation-list">

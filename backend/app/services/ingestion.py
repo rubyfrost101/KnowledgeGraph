@@ -147,6 +147,86 @@ def _append_citation(detail: str, citation: str) -> str:
     return f"{detail}\n\n{citation}"
 
 
+def _clean_summary_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    for raw_line in text.replace("\r\n", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if _looks_like_heading(line) or _is_page_marker(line):
+            continue
+        if line.startswith("引用：") or line.startswith("原句："):
+            continue
+        candidates.append(line)
+    if not candidates:
+        return []
+
+    sentences: list[str] = []
+    for candidate in candidates:
+        sentences.extend(_split_sentences(candidate))
+
+    cleaned = [re.sub(r"\s+", " ", sentence).strip(" -–—:：\t") for sentence in sentences]
+    return [sentence for sentence in cleaned if sentence and sentence not in {"引用", "原句"}]
+
+
+def _compress_summary(label: str, text: str, *, limit: int = 120) -> str:
+    cleaned_sentences = _clean_summary_candidates(text)
+    if not cleaned_sentences:
+        fallback = re.sub(r"\s+", " ", text.strip())
+        return fallback[:limit] if fallback else label
+
+    selected: list[str] = []
+    total = 0
+    for sentence in cleaned_sentences:
+        if len(selected) >= 2:
+            break
+        if selected and canonical_text(sentence) == canonical_text(selected[-1]):
+            continue
+        if len(sentence) < 14 and selected:
+            continue
+        selected.append(sentence)
+        total += len(sentence)
+        if total >= limit:
+            break
+
+    summary = " ".join(selected).strip()
+    summary = re.sub(r"\s+", " ", summary)
+    if not summary:
+        summary = cleaned_sentences[0]
+    summary = summary[:limit].rstrip("，,。.!！？?;；:：")
+    if canonical_text(summary) == canonical_text(label):
+        return cleaned_sentences[0][:limit].rstrip("，,。.!！？?;；:：")
+    return summary
+
+
+def _prefer_summary(existing: str, incoming: str, label: str) -> str:
+    existing_text = existing.strip()
+    incoming_text = incoming.strip()
+    if not existing_text:
+        return incoming_text
+    if not incoming_text:
+        return existing_text
+
+    def _score(value: str) -> float:
+        score = 0.0
+        length = len(value)
+        if 24 <= length <= 120:
+            score += 1.5
+        elif 12 <= length < 24:
+            score += 0.5
+        else:
+            score += max(0.0, 1.2 - abs(length - 72) / 120)
+        if re.search(r"[。！？!?\.]", value):
+            score += 0.5
+        if re.search(r"[，,；;：:]", value):
+            score += 0.25
+        if canonical_text(value) == canonical_text(label):
+            score -= 1.0
+        return score
+
+    return incoming_text if _score(incoming_text) >= _score(existing_text) else existing_text
+
+
 def _body_lines(lines: list[str]) -> list[str]:
     return [line for line in lines if line and not _looks_like_heading(line) and not _is_page_marker(line)]
 
@@ -189,7 +269,7 @@ def _make_node(label: str, category: str, source_id: str, detail: str) -> Knowle
         label=label,
         kind=_infer_kind(label),
         category=category,
-        summary=_split_sentences(detail)[0][:160] if detail else label,
+        summary=_compress_summary(label, detail) if detail else label,
         detail=detail,
         aliases=[],
         sources=[source_id],
@@ -304,7 +384,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                 label=label,
                 kind="topic",
                 category=_category_from_text(f"{label} {block_text}"),
-                summary=_split_sentences(body_text or label)[0][:160],
+                summary=_compress_summary(label, body_text or block_text.strip()),
                 detail=body_text or block_text.strip(),
                 aliases=_extract_aliases(block_text),
                 sources=[document_id],
@@ -329,6 +409,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             node.detail = _append_detail(node.detail, body_text or block_text.strip())
             node.aliases = unique_list([*node.aliases, *_extract_aliases(block_text)])
             node.reference_ids = _merge_reference_ids(node.reference_ids, parent_reference_ids)
+            node.summary = _prefer_summary(node.summary, _compress_summary(label, body_text or block_text.strip()), label)
 
         context = _SectionContext(
             node=node,
@@ -371,7 +452,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                     label=parsed.label,
                     kind=_infer_kind(parsed.label),
                     category=_category_from_text(f"{parsed.label} {parsed.detail}"),
-                    summary=_split_sentences(term_body)[0][:160],
+                    summary=_compress_summary(parsed.label, term_body, limit=100),
                     detail=_append_citation(parsed.detail, citation),
                     aliases=unique_list([parsed.label, *_extract_aliases(parsed.label), *_extract_aliases(parsed.detail)]),
                     sources=[document_id],
@@ -401,6 +482,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
                     section_context.node.reference_ids,
                     [section_context.node.id],
                 )
+                existing.summary = _prefer_summary(existing.summary, _compress_summary(parsed.label, parsed.detail, limit=100), parsed.label)
                 if existing.id == section_context.node.id:
                     continue
                 relation_edges.append(
@@ -422,7 +504,7 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             label=fallback_label,
             kind="topic",
             category=_category_from_text(fallback_label),
-            summary=_split_sentences(request.text)[0][:160],
+            summary=_compress_summary(fallback_label, request.text),
             detail=request.text,
             aliases=unique_list([fallback_label, *_extract_aliases(request.text)]),
             sources=[document_id],

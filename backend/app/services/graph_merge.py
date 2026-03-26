@@ -7,6 +7,8 @@ from itertools import combinations
 from app.models import ImportedKnowledgeBatch, KnowledgeEdge, KnowledgeGraphData, KnowledgeNode
 from app.services.normalization import canonical_text, stable_id, unique_list
 
+_SECTION_LIKE_LABEL_RE = re.compile(r"(chapter|section|part|unit|lesson|chapter\s*\d+|section\s*\d+|第[一二三四五六七八九十百千0-9]+[章节部分篇])", re.I)
+
 
 def _clone_node(node: KnowledgeNode) -> KnowledgeNode:
     return KnowledgeNode(
@@ -48,6 +50,20 @@ def _label_overlap(left: str, right: str) -> float:
     return len(overlap) / max(1, min(len(left_tokens), len(right_tokens)))
 
 
+def _is_section_like(node: KnowledgeNode) -> bool:
+    if node.kind in {"book", "topic"}:
+        return True
+    return bool(_SECTION_LIKE_LABEL_RE.search(canonical_text(node.label)))
+
+
+def _merge_threshold(left: KnowledgeNode, right: KnowledgeNode) -> float:
+    if _is_section_like(left) or _is_section_like(right):
+        return 0.95
+    if left.kind == "term" and right.kind == "term":
+        return 0.9
+    return 0.88
+
+
 def _node_similarity(left: KnowledgeNode, right: KnowledgeNode) -> float:
     left_label = canonical_text(left.label)
     right_label = canonical_text(right.label)
@@ -79,8 +95,11 @@ def _node_similarity(left: KnowledgeNode, right: KnowledgeNode) -> float:
         combined += 0.04
     if any(canonical_text(alias) in left_label for alias in right.aliases):
         combined += 0.04
-    if left.kind in {"book", "topic"} or right.kind in {"book", "topic"}:
-        combined = min(combined, 0.84)
+    if _is_section_like(left) or _is_section_like(right):
+        if left_label == right_label or left_label in right_aliases or right_label in left_aliases:
+            combined = min(combined, 0.99)
+        else:
+            combined = min(combined, 0.92)
     return min(combined, 1.0)
 
 
@@ -144,8 +163,10 @@ def merge_graph_data(base: KnowledgeGraphData, incoming: ImportedKnowledgeBatch)
                 if score > best_score:
                     best_score = score
                     best_id = candidate_id
-            if best_score >= 0.88:
-                existing_id = best_id
+            if best_id is not None:
+                candidate = node_map[best_id]
+                if best_score >= _merge_threshold(candidate, node):
+                    existing_id = best_id
         if existing_id:
             id_remap[node.id] = existing_id
             existing = node_map[existing_id]

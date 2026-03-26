@@ -37,6 +37,8 @@ const quickQuestions = [
   '工业革命最重要的节点是什么？',
 ];
 
+type AppSkin = 'standard' | 'steam';
+
 const backendConfigured = isBackendConfigured();
 
 function kindLabel(kind: KnowledgeNode['kind']): string {
@@ -519,6 +521,7 @@ function App() {
   const [status, setStatus] = useState('准备就绪，先试试示例图谱。');
   const [importTextValue, setImportTextValue] = useState('');
   const [viewMode, setViewMode] = useState<'graph' | 'glossary'>('graph');
+  const [appSkin, setAppSkin] = useState<AppSkin>('standard');
   const [citationPreview, setCitationPreview] = useState<HoverPreview | null>(null);
   const [searchMatches, setSearchMatches] = useState<KnowledgeNode[]>([]);
   const [expandedGlossaryIds, setExpandedGlossaryIds] = useState<string[]>([]);
@@ -528,6 +531,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const glossaryIndex = buildGlossaryTree(graph);
   const isGlossaryView = viewMode === 'glossary';
+  const isSteamSkin = appSkin === 'steam';
 
   function buildHoverPreviewPosition(clientX: number, clientY: number): { x: number; y: number; placement: HoverPreview['placement'] } {
     const fitsRight = clientX + HOVER_PREVIEW_WIDTH + HOVER_PREVIEW_OFFSET + 16 <= window.innerWidth;
@@ -553,6 +557,29 @@ function App() {
   useEffect(() => {
     setSearchMatches(searchNode(graph, query).slice(0, 6));
   }, [graph, query]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedSkin = window.localStorage.getItem('knowledgegraph.skin');
+    if (storedSkin === 'standard' || storedSkin === 'steam') {
+      setAppSkin(storedSkin);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('knowledgegraph.skin', appSkin);
+    document.body.dataset.skin = appSkin;
+    return () => {
+      if (document.body.dataset.skin === appSkin) {
+        delete document.body.dataset.skin;
+      }
+    };
+  }, [appSkin]);
 
   useEffect(() => {
     if (viewMode !== 'glossary') {
@@ -634,6 +661,11 @@ function App() {
   const selectedEdges = selectedId ? neighborhood?.relatedEdges ?? [] : [];
   const activeTask = jobs.find((job) => job.status === 'running' || job.status === 'queued') ?? jobs[0] ?? null;
   const recentJobs = jobs.slice(0, 6);
+  const steamLevel = Math.max(1, Math.ceil(graph.nodes.length / 5));
+  const steamProgress = Math.min(100, (graph.nodes.length % 5) * 20);
+  const steamAnchors = graph.nodes.filter((node) => node.referenceIds.length > 0).length;
+  const steamHeat = selectedEdges.length;
+  const steamUnlockedDocs = graph.documents.length;
   const glossaryTrail = selectedId ? buildGlossaryTrail(selectedId, glossaryIndex.sectionParentById, glossaryIndex.itemParentById) : [];
   const glossarySelectedNode = selectedNode;
   const glossaryChildSections = selectedId
@@ -660,6 +692,9 @@ function App() {
             glossaryChildItems.length,
           )
       : [];
+  const steamMission = detailNode
+    ? `当前任务：聚焦「${detailNode.label}」，把它的路径和引用锚点点亮。`
+    : '当前任务：从图谱里点亮一个节点，开始一段知识冒险。';
 
   const citationPreviewLayer =
     citationPreview && typeof document !== 'undefined'
@@ -1120,7 +1155,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isSteamSkin ? 'is-steam' : ''}`}>
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
 
@@ -1128,6 +1163,11 @@ function App() {
         <div>
           <p className="eyebrow">KnowledgeGraph</p>
           <h1>把书、词典和课堂笔记变成会“关联思考”的知识图谱。</h1>
+          <p className="topbar-copy">
+            {isSteamSkin
+              ? 'Steam 预览把知识工作台包装成任务日志、探索进度和图鉴收集。'
+              : '当前是正式工作台视图，适合导入、抽取、浏览和问答。'}
+          </p>
         </div>
         <div className="topbar-meta">
           <div className="metric">
@@ -1142,6 +1182,10 @@ function App() {
             <span>文档</span>
             <strong>{graph.documents.length}</strong>
           </div>
+          <button className={`mode-toggle ${isSteamSkin ? 'is-active' : ''}`} type="button" onClick={() => setAppSkin(isSteamSkin ? 'standard' : 'steam')}>
+            <span>{isSteamSkin ? 'Steam 模式' : '标准模式'}</span>
+            <strong>{isSteamSkin ? '返回工作台' : '切到 Steam 预览'}</strong>
+          </button>
         </div>
       </header>
 
@@ -1232,6 +1276,53 @@ function App() {
               )}
             </div>
           </section>
+
+          {isSteamSkin ? (
+            <section className="card steam-hud">
+              <div className="card-head">
+                <div>
+                  <p className="card-kicker">Steam Preview</p>
+                  <h2>任务日志</h2>
+                </div>
+                <span className="steam-badge">Lv.{steamLevel}</span>
+              </div>
+              <p className="steam-mission">{steamMission}</p>
+              <div className="steam-hud-grid">
+                <article className="steam-stat">
+                  <span>探索进度</span>
+                  <strong>{steamProgress}%</strong>
+                  <div className="steam-bar">
+                    <div className="steam-bar-fill" style={{ width: `${steamProgress}%` }} />
+                  </div>
+                </article>
+                <article className="steam-stat">
+                  <span>图鉴锚点</span>
+                  <strong>{steamAnchors}</strong>
+                  <p>可继续追溯到上级目录的节点。</p>
+                </article>
+                <article className="steam-stat">
+                  <span>连线热度</span>
+                  <strong>{steamHeat}</strong>
+                  <p>当前节点附近的关系密度。</p>
+                </article>
+                <article className="steam-stat">
+                  <span>已收集档案</span>
+                  <strong>{steamUnlockedDocs}</strong>
+                  <p>导入过的书、PDF 和笔记。</p>
+                </article>
+              </div>
+              <div className="steam-quest-list">
+                <button className="steam-quest" type="button" onClick={() => setViewMode('graph')}>
+                  <strong>切回图谱模式</strong>
+                  <span>继续探索节点和邻域。</span>
+                </button>
+                <button className="steam-quest" type="button" onClick={() => setViewMode('glossary')}>
+                  <strong>进入术语图鉴</strong>
+                  <span>查看目录树、标签和引用锚点。</span>
+                </button>
+              </div>
+            </section>
+          ) : null}
 
           <section className="card task-card">
             <div className="card-head">

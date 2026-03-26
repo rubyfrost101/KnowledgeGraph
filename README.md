@@ -32,6 +32,19 @@ In short:
 - Repeated concepts are merged across books using label and alias similarity
 - Relations are inferred from cue words plus same-domain co-occurrence
 
+## Branch strategy
+
+The repository now uses two parallel release lines:
+
+- `dev` for everyday development
+- `qa` for stabilization and testing before `main`
+- `main` for the stable product
+- `steam.dev` for Steam-oriented feature work
+- `steam.qa` for Steam testing before `steam.main`
+- `steam.main` for the stable Steam release line
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full workflow and merge rules.
+
 There is now a first backend scaffold in [`backend/`](./backend) with:
 
 - `FastAPI` app skeleton

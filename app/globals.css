@@ -129,7 +129,7 @@ input:focus {
 
 .topbar-meta {
   display: grid;
-  grid-template-columns: repeat(3, minmax(92px, 1fr));
+  grid-template-columns: repeat(4, minmax(92px, 1fr));
   gap: 12px;
 }
 
@@ -152,6 +152,52 @@ input:focus {
   display: block;
   margin-top: 6px;
   font-size: 1.35rem;
+}
+
+.topbar-copy {
+  margin: 12px 0 0;
+  max-width: 780px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.mode-toggle {
+  display: grid;
+  align-content: space-between;
+  justify-items: start;
+  gap: 6px;
+  width: 100%;
+  min-width: 160px;
+  padding: 14px 16px;
+  color: var(--text);
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(8, 14, 28, 0.45), rgba(8, 14, 28, 0.32));
+  box-shadow: var(--shadow);
+  transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease;
+}
+
+.mode-toggle:hover {
+  transform: translateY(-1px);
+  border-color: rgba(125, 215, 255, 0.26);
+}
+
+.mode-toggle span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mode-toggle strong {
+  font-size: 1rem;
+}
+
+.mode-toggle.is-active {
+  border-color: rgba(141, 240, 192, 0.24);
+  background: linear-gradient(180deg, rgba(141, 240, 192, 0.12), rgba(8, 14, 28, 0.36));
 }
 
 .workspace {
@@ -339,6 +385,147 @@ input:focus {
 .task-card > * {
   position: relative;
   z-index: 1;
+}
+
+.app-shell.is-steam .card,
+.app-shell.is-steam .canvas-panel,
+.app-shell.is-steam .graph-shell,
+.app-shell.is-steam .task-hero,
+.app-shell.is-steam .task-item,
+.app-shell.is-steam .trash-item,
+.app-shell.is-steam .answer-card {
+  border-color: rgba(141, 240, 192, 0.18);
+  box-shadow:
+    0 18px 80px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(141, 240, 192, 0.06);
+}
+
+.app-shell.is-steam .topbar h1 {
+  text-shadow: 0 0 28px rgba(141, 240, 192, 0.12);
+}
+
+.app-shell.is-steam .toolbar-badges span {
+  border-color: rgba(141, 240, 192, 0.14);
+  background: rgba(141, 240, 192, 0.06);
+  color: #dffef1;
+}
+
+.app-shell.is-steam .view-tab.is-active {
+  color: #07141b;
+  background: linear-gradient(135deg, rgba(141, 240, 192, 0.98), rgba(204, 255, 231, 0.98));
+}
+
+.app-shell.is-steam .primary-button {
+  background: linear-gradient(135deg, #9af2c9 0%, #d6ffee 100%);
+  box-shadow: 0 10px 30px rgba(141, 240, 192, 0.2);
+}
+
+.app-shell.is-steam .ghost-button:hover {
+  border-color: rgba(141, 240, 192, 0.28);
+}
+
+.steam-hud {
+  border-color: rgba(141, 240, 192, 0.22);
+  background:
+    radial-gradient(circle at top right, rgba(141, 240, 192, 0.12), transparent 38%),
+    linear-gradient(180deg, rgba(10, 23, 28, 0.92), rgba(7, 14, 22, 0.96));
+}
+
+.steam-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  color: #e8fff4;
+  border: 1px solid rgba(141, 240, 192, 0.22);
+  background: rgba(141, 240, 192, 0.08);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.steam-mission {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.16);
+  background: rgba(141, 240, 192, 0.06);
+  color: #e6fff5;
+  line-height: 1.65;
+}
+
+.steam-hud-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.steam-stat {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.14);
+  background: rgba(6, 15, 22, 0.56);
+}
+
+.steam-stat span {
+  color: var(--accent-3);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.steam-stat strong {
+  font-size: 1.2rem;
+  color: #f2fff9;
+}
+
+.steam-stat p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+  font-size: 0.84rem;
+}
+
+.steam-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.steam-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(141, 240, 192, 0.95), rgba(125, 215, 255, 0.95));
+  box-shadow: 0 0 18px rgba(141, 240, 192, 0.22);
+}
+
+.steam-quest-list {
+  display: grid;
+  gap: 10px;
+}
+
+.steam-quest {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  text-align: left;
+  color: var(--text);
+  border-radius: 18px;
+  border: 1px solid rgba(141, 240, 192, 0.14);
+  background: linear-gradient(180deg, rgba(7, 16, 24, 0.9), rgba(8, 12, 20, 0.98));
+}
+
+.steam-quest strong {
+  font-size: 0.96rem;
+}
+
+.steam-quest span {
+  color: var(--muted);
+  line-height: 1.52;
+  font-size: 0.84rem;
 }
 
 .task-hero,
@@ -1184,7 +1371,7 @@ input:focus {
   }
 
   .topbar-meta {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .canvas-toolbar {
@@ -1193,6 +1380,10 @@ input:focus {
 
   .graph-svg {
     min-height: 520px;
+  }
+
+  .steam-hud-grid {
+    grid-template-columns: 1fr;
   }
 }
 

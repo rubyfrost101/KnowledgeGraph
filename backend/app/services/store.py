@@ -14,7 +14,9 @@ from app.models import (
     QAResponse,
     SearchHit,
     SearchResponse,
+    UploadIngestResponse,
 )
+from app.services.extraction import extract_text_from_upload
 from app.services.ingestion import ingest_text
 from app.services.normalization import canonical_text
 from app.services.qa import answer_question
@@ -70,6 +72,21 @@ class InMemoryGraphStore:
         document, graph, summary = ingest_text(request)
         self._merge_graph(graph)
         return IngestResponse(document=document, graph=self.snapshot(), summary=summary)
+
+    async def ingest_upload(self, file, title: str | None = None, origin: str = "upload") -> UploadIngestResponse:
+        text, page_count, source_type = await extract_text_from_upload(file)
+        request = IngestRequest(title=title or file.filename, text=text, origin=origin, source_type=source_type)
+        document, graph, summary = ingest_text(request)
+        if page_count is not None:
+            document.page_count = page_count
+        self._merge_graph(graph)
+        return UploadIngestResponse(
+            filename=file.filename or origin,
+            page_count=page_count,
+            document=document,
+            graph=self.snapshot(),
+            summary=summary,
+        )
 
     def answer(self, request: QARequest) -> QAResponse:
         return answer_question(self._graph, request)

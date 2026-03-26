@@ -6,7 +6,7 @@ import { ingestText } from './lib/ingest';
 import { readKnowledgeFile } from './lib/files';
 import { demoGraph } from './lib/sampleData';
 import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeGraphData, KnowledgeNode } from './types';
-import { askBackendQuestion, fetchBackendGraph, ingestBackendText, isBackendConfigured } from './lib/backendClient';
+import { askBackendQuestion, fetchBackendGraph, ingestBackendText, isBackendConfigured, uploadBackendFile } from './lib/backendClient';
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 820;
@@ -197,21 +197,32 @@ function App() {
 
     setBusy(true);
     try {
-      const { text, pageCount } = await readKnowledgeFile(file);
-      const result = await ingestText(text, file.name);
-      const documents: KnowledgeDocument[] = result.batch.documents.map((document) => ({
-        ...document,
-        type: file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'text',
-        origin: file.name,
-        pageCount,
-      }));
-      setGraph((current) => mergeGraphData(current, { ...result.batch, documents }));
-      setSelectedId(result.batch.nodes[0]?.id ?? selectedId);
-      setStatus(
-        pageCount
-          ? `已导入 ${file.name}，解析 ${pageCount} 页，提取 ${result.batch.nodes.length} 个知识点。`
-          : `已导入 ${file.name}，提取 ${result.batch.nodes.length} 个知识点。`,
-      );
+      if (backendConfigured) {
+        const result = await uploadBackendFile({
+          file,
+          title: file.name,
+          origin: file.name,
+        });
+        setGraph(result.graph);
+        setSelectedId(result.graph.nodes[0]?.id ?? selectedId);
+        setStatus(result.summary);
+      } else {
+        const { text, pageCount } = await readKnowledgeFile(file);
+        const result = await ingestText(text, file.name);
+        const documents: KnowledgeDocument[] = result.batch.documents.map((document) => ({
+          ...document,
+          type: file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'text',
+          origin: file.name,
+          pageCount,
+        }));
+        setGraph((current) => mergeGraphData(current, { ...result.batch, documents }));
+        setSelectedId(result.batch.nodes[0]?.id ?? selectedId);
+        setStatus(
+          pageCount
+            ? `已导入 ${file.name}，解析 ${pageCount} 页，提取 ${result.batch.nodes.length} 个知识点。`
+            : `已导入 ${file.name}，提取 ${result.batch.nodes.length} 个知识点。`,
+        );
+      }
       setAnswer(null);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '导入失败，请检查文件格式。');

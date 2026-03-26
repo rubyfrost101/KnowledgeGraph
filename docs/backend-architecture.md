@@ -56,6 +56,12 @@ Responsibilities:
 - Split into sections, paragraphs, and candidate concepts
 - Normalize aliases, duplicates, and cross-book canonical names
 
+Current implementation note:
+
+- The repo now exposes `POST /v1/documents/upload` for multipart file ingestion
+- PDFs are parsed with `pypdf` for selectable text
+- OCR is still a planned fallback for scanned PDFs
+
 ### `Knowledge extraction`
 
 Responsibilities:

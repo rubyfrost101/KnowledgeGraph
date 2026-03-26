@@ -36,6 +36,11 @@ type BackendIngestResponse = {
   summary: string;
 };
 
+type BackendUploadResponse = BackendIngestResponse & {
+  filename: string;
+  page_count?: number | null;
+};
+
 function ensureConfigured() {
   if (!API_BASE_URL) {
     throw new Error('NEXT_PUBLIC_API_BASE_URL is not configured');
@@ -46,7 +51,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   ensureConfigured();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: {
+    headers: init?.body instanceof FormData ? init?.headers : {
       'Content-Type': 'application/json',
       ...(init?.headers ?? {}),
     },
@@ -113,6 +118,37 @@ export async function ingestBackendText(payload: {
   return {
     graph: normalizeGraph(response.graph),
     summary: response.summary,
+  };
+}
+
+export async function uploadBackendFile(payload: {
+  file: File;
+  title?: string;
+  origin?: string;
+}): Promise<{ graph: KnowledgeGraphData; summary: string }> {
+  ensureConfigured();
+  const formData = new FormData();
+  formData.append('file', payload.file);
+  if (payload.title) {
+    formData.append('title', payload.title);
+  }
+  if (payload.origin) {
+    formData.append('origin', payload.origin);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/documents/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `Backend request failed: ${response.status} ${response.statusText}`);
+  }
+
+  const payloadJson = (await response.json()) as BackendUploadResponse;
+  return {
+    graph: normalizeGraph(payloadJson.graph),
+    summary: payloadJson.summary,
   };
 }
 

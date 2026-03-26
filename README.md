@@ -33,7 +33,7 @@ There is now a first backend scaffold in [`backend/`](./backend) with:
 
 - `FastAPI` app skeleton
 - Demo graph endpoints
-- Text ingestion and Q&A placeholders
+- Text ingestion, file upload ingestion, and Q&A endpoints
 - `docker-compose.yml` for `PostgreSQL`, `Neo4j`, and `Redis`
 
 ## Suggested product names
@@ -68,6 +68,11 @@ cd backend
 pip3 install -r requirements.txt
 uvicorn app.main:app --reload
 ```
+
+The backend now accepts both JSON text ingestion and multipart file upload at:
+
+- `POST /v1/documents`
+- `POST /v1/documents/upload`
 
 Or run the full stack with Docker:
 

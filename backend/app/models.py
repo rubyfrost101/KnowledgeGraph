@@ -83,6 +83,11 @@ class IngestResponse(BaseModel):
     summary: str
 
 
+class UploadIngestResponse(IngestResponse):
+    filename: str
+    page_count: int | None = None
+
+
 class QARequest(BaseModel):
     question: str
     graph_id: str = "default"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.models import IngestRequest, QARequest, QAResponse
 from app.services.store import STORE
@@ -49,6 +49,18 @@ def search(q: str):
 @router.post("/documents")
 def ingest_document(request: IngestRequest):
     return STORE.ingest(request)
+
+
+@router.post("/documents/upload")
+async def upload_document(
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    origin: str = Form(default="upload"),
+):
+    try:
+        return await STORE.ingest_upload(file=file, title=title, origin=origin)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.post("/qa", response_model=QAResponse)

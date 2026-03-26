@@ -47,6 +47,10 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full workflow and merge rules
 
 For release promotions from `qa` to `main`, use [`.github/PULL_REQUEST_TEMPLATE/qa-to-main.md`](./.github/PULL_REQUEST_TEMPLATE/qa-to-main.md) so the merge checklist and release notes stay consistent.
 
+For testing promotions from `dev` to `qa`, use [`.github/PULL_REQUEST_TEMPLATE/dev-to-qa.md`](./.github/PULL_REQUEST_TEMPLATE/dev-to-qa.md).
+
+The GitHub branch protection and required checks plan is documented in [`docs/branch-protection.md`](./docs/branch-protection.md).
+
 There is now a first backend scaffold in [`backend/`](./backend) with:
 
 - `FastAPI` app skeleton

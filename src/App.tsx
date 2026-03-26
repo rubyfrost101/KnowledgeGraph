@@ -528,6 +528,7 @@ function App() {
   const [jobs, setJobs] = useState<KnowledgeJob[]>([]);
   const [deletedDocuments, setDeletedDocuments] = useState<KnowledgeDocument[]>([]);
   const [deletedNodes, setDeletedNodes] = useState<KnowledgeNode[]>([]);
+  const [bookmarkedIds, setBookmarkedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const glossaryIndex = buildGlossaryTree(graph);
   const isGlossaryView = viewMode === 'glossary';
@@ -580,6 +581,41 @@ function App() {
       }
     };
   }, [appSkin]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedBookmarks = window.localStorage.getItem('knowledgegraph.bookmarks');
+    if (!storedBookmarks) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(storedBookmarks);
+      if (Array.isArray(parsed)) {
+        setBookmarkedIds(
+          uniqueList(parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)),
+        );
+      }
+    } catch {
+      window.localStorage.removeItem('knowledgegraph.bookmarks');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('knowledgegraph.bookmarks', JSON.stringify(bookmarkedIds));
+  }, [bookmarkedIds]);
+
+  useEffect(() => {
+    setBookmarkedIds((current) => {
+      const availableIds = new Set(graph.nodes.map((node) => node.id));
+      const next = current.filter((id) => availableIds.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [graph]);
 
   useEffect(() => {
     if (viewMode !== 'glossary') {
@@ -661,6 +697,9 @@ function App() {
   const selectedEdges = selectedId ? neighborhood?.relatedEdges ?? [] : [];
   const activeTask = jobs.find((job) => job.status === 'running' || job.status === 'queued') ?? jobs[0] ?? null;
   const recentJobs = jobs.slice(0, 6);
+  const bookmarkedNodes = bookmarkedIds
+    .map((nodeId) => graph.nodes.find((node) => node.id === nodeId))
+    .filter((node): node is KnowledgeNode => Boolean(node));
   const steamLevel = Math.max(1, Math.ceil(graph.nodes.length / 5));
   const steamProgress = Math.min(100, (graph.nodes.length % 5) * 20);
   const steamAnchors = graph.nodes.filter((node) => node.referenceIds.length > 0).length;
@@ -692,6 +731,7 @@ function App() {
             glossaryChildItems.length,
           )
       : [];
+  const isBookmarked = detailNode ? bookmarkedIds.includes(detailNode.id) : false;
   const steamMission = detailNode
     ? `当前任务：聚焦「${detailNode.label}」，把它的路径和引用锚点点亮。`
     : '当前任务：从图谱里点亮一个节点，开始一段知识冒险。';
@@ -853,6 +893,7 @@ function App() {
     setJobs([]);
     setDeletedDocuments([]);
     setDeletedNodes([]);
+    setBookmarkedIds([]);
     setStatus('已恢复示例图谱。');
   }
 
@@ -901,6 +942,25 @@ function App() {
     if (target) {
       focusGlossaryNode(target);
     }
+  }
+
+  function toggleBookmark(node: KnowledgeNode) {
+    const wasBookmarked = bookmarkedIds.includes(node.id);
+    setBookmarkedIds((current) => {
+      if (current.includes(node.id)) {
+        return current.filter((id) => id !== node.id);
+      }
+      return [node.id, ...current].filter((id, index, array) => array.indexOf(id) === index);
+    });
+    setStatus(wasBookmarked ? `已从收藏夹移除「${node.label}」。` : `已收藏「${node.label}」。`);
+  }
+
+  function openBookmarkedNode(node: KnowledgeNode) {
+    if (isGlossaryView) {
+      focusGlossaryNode(node);
+      return;
+    }
+    applySearchSelection(node);
   }
 
   function showReferencePreview(target: KnowledgeNode, clientX: number, clientY: number) {
@@ -1275,6 +1335,46 @@ function App() {
                 ))
               )}
             </div>
+          </section>
+
+          <section className="card">
+            <div className="card-head">
+              <div>
+                <p className="card-kicker">Bookmarks</p>
+                <h2>收藏夹</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => setBookmarkedIds([])} disabled={bookmarkedNodes.length === 0}>
+                清空
+              </button>
+            </div>
+            {bookmarkedNodes.length === 0 ? (
+              <p className="muted">把重要节点收藏起来，后面可以随时回到这里。</p>
+            ) : (
+              <div className="bookmark-list">
+                {bookmarkedNodes.map((node) => {
+                  const isSelectedBookmark = selectedId === node.id;
+                  return (
+                    <button
+                      key={node.id}
+                      type="button"
+                      className={`bookmark-item ${isSelectedBookmark ? 'is-active' : ''}`}
+                      onClick={() => openBookmarkedNode(node)}
+                    >
+                      <div className="bookmark-item-head">
+                        <strong>{node.label}</strong>
+                        <span>{kindLabel(node.kind)}</span>
+                      </div>
+                      <span>{node.summary}</span>
+                      <div className="bookmark-item-meta">
+                        <span>{node.category}</span>
+                        {node.referenceIds.length > 0 ? <span>{node.referenceIds.length} 个锚点</span> : null}
+                        {node.deletedAt ? <span>已删除</span> : null}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
           {isSteamSkin ? (
@@ -1714,6 +1814,16 @@ function App() {
                 <p className="card-kicker">Detail</p>
                 <h2>{detailNode?.label ?? (isGlossaryView ? '引用详情' : '知识点详情')}</h2>
               </div>
+              {detailNode ? (
+                <button
+                  className={`bookmark-toggle ${isBookmarked ? 'is-active' : ''}`}
+                  type="button"
+                  onClick={() => toggleBookmark(detailNode)}
+                  disabled={busy}
+                >
+                  {isBookmarked ? '已收藏' : '收藏'}
+                </button>
+              ) : null}
             </div>
 
             {detailNode ? (

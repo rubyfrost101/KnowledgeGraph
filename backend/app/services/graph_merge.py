@@ -34,6 +34,19 @@ def _clone_edge(edge: KnowledgeEdge) -> KnowledgeEdge:
     )
 
 
+def _token_set(value: str) -> set[str]:
+    return {token for token in canonical_text(value).split() if token}
+
+
+def _label_overlap(left: str, right: str) -> float:
+    left_tokens = _token_set(left)
+    right_tokens = _token_set(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    overlap = left_tokens & right_tokens
+    return len(overlap) / max(1, min(len(left_tokens), len(right_tokens)))
+
+
 def _node_similarity(left: KnowledgeNode, right: KnowledgeNode) -> float:
     left_label = canonical_text(left.label)
     right_label = canonical_text(right.label)
@@ -50,9 +63,22 @@ def _node_similarity(left: KnowledgeNode, right: KnowledgeNode) -> float:
         return 0.9
 
     ratio = SequenceMatcher(None, left_label, right_label).ratio()
+    token_overlap = _label_overlap(left_label, right_label)
+    summary_overlap = SequenceMatcher(
+        None,
+        canonical_text(f"{left.summary} {left.detail[:120]}"),
+        canonical_text(f"{right.summary} {right.detail[:120]}"),
+    ).ratio()
+    combined = max(ratio, (ratio * 0.6) + (token_overlap * 0.25) + (summary_overlap * 0.15))
+    if left.kind == right.kind:
+        combined += 0.03
     if left.category == right.category:
-        ratio += 0.05
-    return ratio
+        combined += 0.05
+    if any(canonical_text(alias) in right_label for alias in left.aliases):
+        combined += 0.04
+    if any(canonical_text(alias) in left_label for alias in right.aliases):
+        combined += 0.04
+    return min(combined, 1.0)
 
 
 def _append_unique_detail(existing: str, incoming: str) -> str:

@@ -70,3 +70,16 @@ export interface KnowledgeAnswer {
   supportingNodes: KnowledgeNode[];
   citations: string[];
 }
+
+export interface KnowledgeJob {
+  jobId: string;
+  documentId: string;
+  filename: string;
+  kind: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: number;
+  summary?: string | null;
+  error?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}

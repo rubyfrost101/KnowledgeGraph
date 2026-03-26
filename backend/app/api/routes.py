@@ -96,6 +96,11 @@ def get_job(job_id: str):
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@router.get("/jobs", response_model=list[JobStatusResponse])
+def list_jobs(limit: int = Query(default=8, ge=1, le=50)):
+    return STORE.list_jobs(limit=limit)
+
+
 @router.delete("/documents/{document_id}", response_model=MutationResponse)
 def delete_document(document_id: str):
     return STORE.delete_document(document_id)

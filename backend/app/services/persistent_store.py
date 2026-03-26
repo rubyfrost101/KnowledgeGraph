@@ -306,16 +306,16 @@ class PersistentGraphStore:
             job = session.get(GraphJobORM, job_id)
             if job is None:
                 raise KeyError(f"Job not found: {job_id}")
-            return JobStatusResponse(
-                job_id=job.id,
-                document_id=job.document_id,
-                filename=job.filename,
-                kind=job.kind,
-                status=job.status,  # type: ignore[arg-type]
-                progress=job.progress,
-                summary=job.summary,
-                error=job.error,
-            )
+            return self._job_to_model(job)
+
+    def list_jobs(self, limit: int = 8) -> list[JobStatusResponse]:
+        with session_scope() as session:
+            rows = session.scalars(
+                select(GraphJobORM)
+                .order_by(desc(GraphJobORM.updated_at), desc(GraphJobORM.created_at))
+                .limit(limit)
+            ).all()
+            return [self._job_to_model(row) for row in rows]
 
     def process_upload_job(self, job_id: str) -> None:
         with session_scope() as session:
@@ -327,12 +327,19 @@ class PersistentGraphStore:
             if blob is None or document is None:
                 raise KeyError(f"Document payload not found for job: {job_id}")
             job.status = "running"
-            job.progress = 10
+            job.progress = 8
+            job.summary = "正在读取原始文件"
+            job.error = None
             job.updated_at = _now()
             document.status = "running"
 
         try:
+            self._update_job(job_id, progress=18, summary="正在提取文本")
             extraction = extract_text_from_bytes(blob.filename, blob.content_type, blob.data)
+            stage_summary = "正在分段解析章节与术语"
+            if extraction.used_ocr:
+                stage_summary += "，已启用 OCR"
+            self._update_job(job_id, progress=36, summary=stage_summary)
             request = IngestRequest(
                 title=document.title,
                 text=extraction.text,
@@ -345,8 +352,10 @@ class PersistentGraphStore:
                 document_model.page_count = extraction.page_count
             if extraction.used_ocr:
                 document_model.notes = (document_model.notes or "") + " OCR fallback used."
+            self._update_job(job_id, progress=62, summary="正在合并跨书知识与去重")
             self._save_revision(document.id, "import", incoming_graph)
             merged = merge_graph_data(self.snapshot(), ImportedKnowledgeBatch(**incoming_graph.model_dump()))
+            self._update_job(job_id, progress=86, summary="正在写入图数据库与持久层")
             self._persist_snapshot(merged)
             with session_scope() as session:
                 job = session.get(GraphJobORM, job_id)
@@ -488,6 +497,43 @@ class PersistentGraphStore:
                     created_at=_now(),
                 )
             )
+
+    def _job_to_model(self, job: GraphJobORM) -> JobStatusResponse:
+        return JobStatusResponse(
+            job_id=job.id,
+            document_id=job.document_id,
+            filename=job.filename,
+            kind=job.kind,
+            status=job.status,  # type: ignore[arg-type]
+            progress=job.progress,
+            summary=job.summary,
+            error=job.error,
+            created_at=job.created_at.isoformat(),
+            updated_at=job.updated_at.isoformat(),
+        )
+
+    def _update_job(
+        self,
+        job_id: str,
+        *,
+        status: str | None = None,
+        progress: int | None = None,
+        summary: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        with session_scope() as session:
+            job = session.get(GraphJobORM, job_id)
+            if job is None:
+                return
+            if status is not None:
+                job.status = status
+            if progress is not None:
+                job.progress = progress
+            if summary is not None:
+                job.summary = summary
+            if error is not None:
+                job.error = error
+            job.updated_at = _now()
 
     def _persist_snapshot(self, graph: KnowledgeGraphData) -> None:
         with session_scope() as session:

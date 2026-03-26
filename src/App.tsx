@@ -5,13 +5,14 @@ import { answerQuestion, collectNeighborhood, layoutGraph, mergeGraphData, searc
 import { ingestText } from './lib/ingest';
 import { readKnowledgeFile } from './lib/files';
 import { demoGraph } from './lib/sampleData';
-import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeGraphData, KnowledgeNode } from './types';
+import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeGraphData, KnowledgeJob, KnowledgeNode } from './types';
 import {
   askBackendQuestion,
   deleteBackendDocument,
   deleteBackendNode,
   fetchBackendDocuments,
   fetchBackendGraph,
+  fetchBackendJobs,
   fetchBackendNodes,
   ingestBackendText,
   isBackendConfigured,
@@ -95,6 +96,70 @@ function nodeTone(kind: KnowledgeNode['kind']): string {
   }
 }
 
+function jobStatusLabel(status: KnowledgeJob['status']): string {
+  switch (status) {
+    case 'queued':
+      return '排队中';
+    case 'running':
+      return '处理中';
+    case 'completed':
+      return '已完成';
+    case 'failed':
+      return '失败';
+    default:
+      return status;
+  }
+}
+
+function jobStatusTone(status: KnowledgeJob['status']): string {
+  switch (status) {
+    case 'queued':
+      return 'job-queued';
+    case 'running':
+      return 'job-running';
+    case 'completed':
+      return 'job-completed';
+    case 'failed':
+      return 'job-failed';
+    default:
+      return 'job-neutral';
+  }
+}
+
+function formatRelativeTime(timestamp?: string | null): string {
+  if (!timestamp) {
+    return '刚刚';
+  }
+  const value = new Date(timestamp).getTime();
+  if (Number.isNaN(value)) {
+    return '刚刚';
+  }
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - value) / 1000));
+  if (diffSeconds < 60) {
+    return '刚刚';
+  }
+  const minutes = Math.floor(diffSeconds / 60);
+  if (minutes < 60) {
+    return `${minutes} 分钟前`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} 小时前`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days} 天前`;
+}
+
+function mergeJobs(current: KnowledgeJob[], incoming: KnowledgeJob): KnowledgeJob[] {
+  const next = current.filter((job) => job.jobId !== incoming.jobId);
+  next.unshift(incoming);
+  return next.sort((left, right) => {
+    const leftTime = new Date(left.updatedAt ?? left.createdAt ?? 0).getTime();
+    const rightTime = new Date(right.updatedAt ?? right.createdAt ?? 0).getTime();
+    return rightTime - leftTime;
+  });
+}
+
 function App() {
   const [graph, setGraph] = useState<KnowledgeGraphData>(demoGraph);
   const [selectedId, setSelectedId] = useState<string>(demoGraph.nodes[0]?.id ?? '');
@@ -108,6 +173,7 @@ function App() {
   const [status, setStatus] = useState('准备就绪，先试试示例图谱。');
   const [importTextValue, setImportTextValue] = useState('');
   const [searchMatches, setSearchMatches] = useState<KnowledgeNode[]>([]);
+  const [jobs, setJobs] = useState<KnowledgeJob[]>([]);
   const [deletedDocuments, setDeletedDocuments] = useState<KnowledgeDocument[]>([]);
   const [deletedNodes, setDeletedNodes] = useState<KnowledgeNode[]>([]);
   const [busy, setBusy] = useState(false);
@@ -126,14 +192,16 @@ function App() {
   }, [graph, query]);
 
   async function syncRemoteCollections() {
-    const [remoteGraph, remoteDocuments, remoteNodes] = await Promise.all([
+    const [remoteGraph, remoteDocuments, remoteNodes, remoteJobs] = await Promise.all([
       fetchBackendGraph(),
       fetchBackendDocuments(true),
       fetchBackendNodes(true),
+      fetchBackendJobs(12),
     ]);
     setGraph(remoteGraph);
     setDeletedDocuments(remoteDocuments.filter((document) => document.status === 'deleted'));
     setDeletedNodes(remoteNodes.filter((node) => Boolean(node.deletedAt)));
+    setJobs(remoteJobs);
   }
 
   useEffect(() => {
@@ -146,10 +214,11 @@ function App() {
 
       setStatus('正在连接后端知识库...');
       try {
-        const [remoteGraph, remoteDocuments, remoteNodes] = await Promise.all([
+        const [remoteGraph, remoteDocuments, remoteNodes, remoteJobs] = await Promise.all([
           fetchBackendGraph(),
           fetchBackendDocuments(true),
           fetchBackendNodes(true),
+          fetchBackendJobs(12),
         ]);
         if (!active) {
           return;
@@ -157,6 +226,7 @@ function App() {
         setGraph(remoteGraph);
         setDeletedDocuments(remoteDocuments.filter((document) => document.status === 'deleted'));
         setDeletedNodes(remoteNodes.filter((node) => Boolean(node.deletedAt)));
+        setJobs(remoteJobs);
         setStatus('已连接后端知识库。');
       } catch {
         if (active) {
@@ -178,6 +248,8 @@ function App() {
     ? layout.nodes.filter((node) => neighborhood?.adjacentIds.has(node.id) && node.id !== selectedId)
     : [];
   const selectedEdges = selectedId ? neighborhood?.relatedEdges ?? [] : [];
+  const activeTask = jobs.find((job) => job.status === 'running' || job.status === 'queued') ?? jobs[0] ?? null;
+  const recentJobs = jobs.slice(0, 6);
 
   async function importRawText(text: string, origin: string, type: 'text' | 'pdf') {
     const trimmed = text.trim();
@@ -233,7 +305,8 @@ function App() {
           title: file.name,
           origin: file.name,
         });
-        setStatus(`文件已上传，任务 ${job.status}...`);
+        setJobs((current) => mergeJobs(current, job));
+        setStatus(`文件已上传，任务已进入 ${jobStatusLabel(job.status)}。`);
 
         let currentJob = job;
         for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -241,8 +314,9 @@ function App() {
             break;
           }
           await new Promise((resolve) => setTimeout(resolve, 1000));
-          currentJob = await pollBackendJob(job.job_id);
-          setStatus(`任务 ${currentJob.status}，进度 ${currentJob.progress}%`);
+          currentJob = await pollBackendJob(job.jobId);
+          setJobs((current) => mergeJobs(current, currentJob));
+          setStatus(`任务 ${jobStatusLabel(currentJob.status)}，进度 ${currentJob.progress}%`);
         }
 
         if (currentJob.status === 'failed') {
@@ -302,6 +376,7 @@ function App() {
     setQuery('');
     setQuestion('');
     setAnswer(null);
+    setJobs([]);
     setDeletedDocuments([]);
     setDeletedNodes([]);
     setStatus('已恢复示例图谱。');
@@ -460,6 +535,71 @@ function App() {
             </div>
           </section>
 
+          <section className="card task-card">
+            <div className="card-head">
+              <div>
+                <p className="card-kicker">Tasks</p>
+                <h2>任务中心</h2>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => void syncRemoteCollections()} disabled={!backendConfigured || busy}>
+                刷新
+              </button>
+            </div>
+
+            {activeTask ? (
+              <div className="task-hero">
+                <div className="task-hero-head">
+                  <div>
+                    <strong>{activeTask.filename}</strong>
+                    <span>{activeTask.summary || '正在等待任务结果。'}</span>
+                  </div>
+                  <span className={`status-chip ${jobStatusTone(activeTask.status)}`}>{jobStatusLabel(activeTask.status)}</span>
+                </div>
+                <div className="progress-shell">
+                  <div className="progress-track">
+                    <div className="progress-fill" style={{ width: `${Math.min(100, Math.max(0, activeTask.progress))}%` }} />
+                  </div>
+                </div>
+                <div className="task-hero-meta">
+                  <span>{activeTask.kind === 'upload' ? '导入任务' : activeTask.kind}</span>
+                  <span>{activeTask.progress}%</span>
+                  <span>{formatRelativeTime(activeTask.updatedAt ?? activeTask.createdAt)}</span>
+                </div>
+                {activeTask.error ? <p className="task-error">{activeTask.error}</p> : null}
+              </div>
+            ) : (
+              <p className="muted">暂无后台任务。导入文件后，进度会在这里实时显示。</p>
+            )}
+
+            <div className="task-list">
+              {recentJobs.length === 0 ? (
+                <p className="muted">这里会显示最近的导入历史和处理进度。</p>
+              ) : (
+                recentJobs.map((job) => (
+                  <article key={job.jobId} className="task-item">
+                    <div className="task-item-head">
+                      <div>
+                        <strong>{job.filename}</strong>
+                        <span>{job.summary || '等待更新'}</span>
+                      </div>
+                      <span className={`status-chip ${jobStatusTone(job.status)}`}>{jobStatusLabel(job.status)}</span>
+                    </div>
+                    <div className="progress-shell progress-shell-sm">
+                      <div className="progress-track">
+                        <div className="progress-fill" style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }} />
+                      </div>
+                    </div>
+                    <div className="task-item-meta">
+                      <span>{job.progress}%</span>
+                      <span>{formatRelativeTime(job.updatedAt ?? job.createdAt)}</span>
+                      <span>#{job.documentId.slice(0, 8)}</span>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+
           <section className="card">
             <div className="card-head">
               <div>
@@ -499,31 +639,43 @@ function App() {
                 <p className="card-kicker">Recycle Bin</p>
                 <h2>回收站</h2>
               </div>
+              <button className="ghost-button" type="button" onClick={() => void syncRemoteCollections()} disabled={!backendConfigured || busy}>
+                同步
+              </button>
+            </div>
+
+            <div className="trash-summary">
+              <span className="pill">已删除文档 {deletedDocuments.length}</span>
+              <span className="pill">已删除知识点 {deletedNodes.length}</span>
+              <span className="pill">可恢复来源 {deletedNodes.filter((node) => node.sources.length > 0).length}</span>
             </div>
 
             <div className="section-block">
               <h3>已删除文档</h3>
-              <div className="search-results">
+              <div className="trash-list">
                 {deletedDocuments.length === 0 ? (
                   <p className="muted">暂无可恢复的文档。</p>
                 ) : (
                   deletedDocuments.map((document) => (
-                    <div key={document.id} className="search-result">
-                      <strong>{document.title}</strong>
-                      <span>
-                        {document.type} · {document.origin}
-                      </span>
+                    <article key={document.id} className="trash-item">
+                      <div className="trash-item-head">
+                        <div>
+                          <strong>{document.title}</strong>
+                          <span>{document.type} · {document.origin}</span>
+                        </div>
+                        <span className="pill">删除于 {formatRelativeTime(document.deletedAt)}</span>
+                      </div>
+                      <p className="trash-item-copy">{document.notes || '这份文档目前处于回收站，恢复后会重新合并到图谱里。'}</p>
+                      <div className="trash-item-meta">
+                        <span className="pill">{document.status === 'deleted' ? '已删除' : document.status}</span>
+                        <span className="pill">{document.deletedReason || '软删除'}</span>
+                      </div>
                       <div className="actions-row">
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => applyDocumentMutation(document.id, 'restore')}
-                          disabled={busy}
-                        >
+                        <button className="ghost-button" type="button" onClick={() => applyDocumentMutation(document.id, 'restore')} disabled={busy}>
                           恢复文档
                         </button>
                       </div>
-                    </div>
+                    </article>
                   ))
                 )}
               </div>
@@ -531,14 +683,30 @@ function App() {
 
             <div className="section-block">
               <h3>已删除知识点</h3>
-              <div className="search-results">
+              <div className="trash-list">
                 {deletedNodes.length === 0 ? (
                   <p className="muted">暂无可恢复的知识点。</p>
                 ) : (
                   deletedNodes.map((node) => (
-                    <div key={node.id} className="search-result">
-                      <strong>{node.label}</strong>
-                      <span>{node.deletedReason || '已软删除'}</span>
+                    <article key={node.id} className="trash-item">
+                      <div className="trash-item-head">
+                        <div>
+                          <strong>{node.label}</strong>
+                          <span>
+                            {kindLabel(node.kind)} · {node.category}
+                          </span>
+                        </div>
+                        <span className="pill">来源 {node.sources.length}</span>
+                      </div>
+                      <p className="trash-item-copy">{node.deletedReason || '已软删除的知识点会保留来源痕迹，便于恢复和追溯。'}</p>
+                      <div className="trash-item-meta">
+                        <span className="pill">删除于 {formatRelativeTime(node.deletedAt)}</span>
+                        {node.sources.slice(0, 3).map((source) => (
+                          <span key={source} className="pill">
+                            {source}
+                          </span>
+                        ))}
+                      </div>
                       <div className="actions-row">
                         <button
                           className="ghost-button"
@@ -548,10 +716,10 @@ function App() {
                           }}
                           disabled={busy || node.sources.length === 0}
                         >
-                          {node.sources.length === 0 ? '先恢复文档' : '恢复知识点'}
+                          {node.sources.length === 0 ? '先恢复来源文档' : '恢复知识点'}
                         </button>
                       </div>
-                    </div>
+                    </article>
                   ))
                 )}
               </div>

@@ -98,6 +98,8 @@ class InMemoryGraphStore:
             progress=100,
             summary=summary,
             error=None,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            updated_at=datetime.now(timezone.utc).isoformat(),
         )
 
     def get_job(self, job_id: str):
@@ -112,7 +114,12 @@ class InMemoryGraphStore:
             progress=100,
             summary="In-memory jobs are immediate.",
             error=None,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            updated_at=datetime.now(timezone.utc).isoformat(),
         )
+
+    def list_jobs(self, limit: int = 8):
+        return []
 
     def process_upload_job(self, job_id: str) -> None:
         return None

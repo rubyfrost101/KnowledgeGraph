@@ -109,6 +109,8 @@ class JobStatusResponse(BaseModel):
     progress: int = 0
     summary: str | None = None
     error: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class MutationResponse(BaseModel):

@@ -1,4 +1,4 @@
-import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeGraphData, KnowledgeNode } from '../types';
+import type { KnowledgeAnswer, KnowledgeDocument, KnowledgeGraphData, KnowledgeJob, KnowledgeNode } from '../types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim().replace(/\/$/, '') ?? '';
 
@@ -56,6 +56,8 @@ type BackendJobResponse = {
   progress: number;
   summary?: string | null;
   error?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 type BackendMutationResponse = {
@@ -125,6 +127,21 @@ function normalizeAnswer(answer: BackendQAResponse): KnowledgeAnswer {
   };
 }
 
+function normalizeJob(job: BackendJobResponse): KnowledgeJob {
+  return {
+    jobId: job.job_id,
+    documentId: job.document_id,
+    filename: job.filename,
+    kind: job.kind,
+    status: job.status,
+    progress: job.progress,
+    summary: job.summary ?? undefined,
+    error: job.error ?? undefined,
+    createdAt: job.created_at ?? undefined,
+    updatedAt: job.updated_at ?? undefined,
+  };
+}
+
 export function isBackendConfigured(): boolean {
   return API_BASE_URL.length > 0;
 }
@@ -171,7 +188,7 @@ export async function uploadBackendFile(payload: {
   file: File;
   title?: string;
   origin?: string;
-}): Promise<BackendJobResponse> {
+}): Promise<KnowledgeJob> {
   ensureConfigured();
   const formData = new FormData();
   formData.append('file', payload.file);
@@ -191,11 +208,18 @@ export async function uploadBackendFile(payload: {
     throw new Error(detail || `Backend request failed: ${response.status} ${response.statusText}`);
   }
 
-  return response.json() as Promise<BackendJobResponse>;
+  const job = (await response.json()) as BackendJobResponse;
+  return normalizeJob(job);
 }
 
-export async function pollBackendJob(jobId: string): Promise<BackendJobResponse> {
-  return requestJson<BackendJobResponse>(`/v1/jobs/${jobId}`);
+export async function pollBackendJob(jobId: string): Promise<KnowledgeJob> {
+  const job = await requestJson<BackendJobResponse>(`/v1/jobs/${jobId}`);
+  return normalizeJob(job);
+}
+
+export async function fetchBackendJobs(limit = 8): Promise<KnowledgeJob[]> {
+  const jobs = await requestJson<BackendJobResponse[]>(`/v1/jobs?limit=${limit}`);
+  return jobs.map(normalizeJob);
 }
 
 async function requestMutation(path: string, method: 'DELETE' | 'POST'): Promise<BackendMutationResponse> {

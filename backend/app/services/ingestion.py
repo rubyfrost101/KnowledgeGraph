@@ -248,10 +248,55 @@ def _collect_keywords(label: str, candidates: list[str], limit: int = 4) -> list
     return keywords
 
 
-def _section_summary_card(label: str, detail: str, keywords: list[str]) -> str:
+def _section_tags(
+    label: str,
+    detail: str,
+    keywords: list[str],
+    *,
+    child_section_count: int = 0,
+    child_term_count: int = 0,
+    reference_count: int = 0,
+) -> list[str]:
+    tags: list[str] = []
+    normalized = canonical_text(f"{label} {detail}")
+    if child_section_count > 0:
+        tags.append("目录提要")
+        if child_section_count >= 2:
+            tags.append("章节总览")
+    if child_term_count >= 3:
+        tags.append("术语密集")
+    elif child_term_count > 0:
+        tags.append("术语提要")
+    if reference_count > 0:
+        tags.append("可追溯")
+        tags.append("来源锚点")
+    if re.search(r"例如|比如|示例|example|such as", normalized, re.I):
+        tags.append("示例型")
+    if re.search(r"对比|反义|contrast|opposite|versus|vs\.", normalized, re.I):
+        tags.append("对照型")
+    if re.search(r"步骤|过程|方法|process|workflow|procedure|mechanism|encoding|retrieval", normalized, re.I):
+        tags.append("过程型")
+    if re.search(r"定义|表示|means|is|are|指|说明|解释", normalized, re.I):
+        tags.append("定义型")
+    if re.search(r"关系|联系|关联|related|graph|node|edge", normalized, re.I):
+        tags.append("关系型")
+    if keywords:
+        tags.append("关键词索引")
+    if not tags:
+        tags.append("章节提要")
+    return unique_list([tag.strip() for tag in tags if tag.strip()])[:4]
+
+
+def _section_summary_card(
+    label: str,
+    detail: str,
+    keywords: list[str],
+    tags: list[str],
+) -> str:
     keyword_text = " / ".join(keywords) if keywords else "无"
+    tag_text = " / ".join(tags) if tags else "无"
     one_line = _compress_summary(label, detail, limit=110)
-    return f"目录卡片：{label}\n关键词：{keyword_text}\n一句话总结：{one_line}"
+    return f"目录卡片：{label}\n自动标签：{tag_text}\n关键词：{keyword_text}\n一句话总结：{one_line}"
 
 
 def _body_lines(lines: list[str]) -> list[str]:
@@ -567,6 +612,20 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
 
     nodes = list(nodes_by_id.values())
     edges: list[KnowledgeEdge] = [*relation_edges]
+    child_section_counts: dict[str, int] = {}
+    child_term_counts: dict[str, int] = {}
+    for edge in relation_edges:
+        if edge.kind != "part-of":
+            continue
+        source = nodes_by_id.get(edge.source)
+        target = nodes_by_id.get(edge.target)
+        if source is None or target is None:
+            continue
+        if source.kind in {"book", "topic"}:
+            child_section_counts[target.id] = child_section_counts.get(target.id, 0) + 1
+        else:
+            child_term_counts[target.id] = child_term_counts.get(target.id, 0) + 1
+
     for block, section_context in zip(blocks, block_contexts):
         lines = [line.strip() for line in block.split("\n") if line.strip()]
         block_mentions: list[KnowledgeNode] = [section_context.node]
@@ -643,7 +702,15 @@ def ingest_text(request: IngestRequest) -> tuple[KnowledgeDocument, KnowledgeGra
             *_extract_aliases(node.detail),
         ]
         keywords = _collect_keywords(node.label, candidates, limit=4)
-        node.summary = _section_summary_card(node.label, node.detail, keywords)
+        tags = _section_tags(
+            node.label,
+            node.detail,
+            keywords,
+            child_section_count=child_section_counts.get(node.id, 0),
+            child_term_count=child_term_counts.get(node.id, 0),
+            reference_count=len(node.reference_ids),
+        )
+        node.summary = _section_summary_card(node.label, node.detail, keywords, tags)
 
     edges = _dedupe_edges(edges)
     final_nodes = list(nodes_by_id.values())

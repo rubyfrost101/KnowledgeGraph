@@ -1,5 +1,6 @@
 "use client";
 
+import { createPortal } from 'react-dom';
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { answerQuestion, collectNeighborhood, layoutGraph, mergeGraphData, searchNode } from './lib/graph';
 import { ingestText } from './lib/ingest';
@@ -187,6 +188,7 @@ function truncateText(value: string, limit = 120): string {
 
 type SectionSummaryParts = {
   card: string;
+  tags: string[];
   keywords: string[];
   oneLine: string;
 };
@@ -198,6 +200,7 @@ function splitSectionSummary(summary: string, fallbackLabel: string): SectionSum
     .filter(Boolean);
   const structured: SectionSummaryParts = {
     card: fallbackLabel,
+    tags: [],
     keywords: [],
     oneLine: '',
   };
@@ -205,6 +208,18 @@ function splitSectionSummary(summary: string, fallbackLabel: string): SectionSum
   for (const line of lines) {
     if (line.startsWith('目录卡片：')) {
       structured.card = line.replace('目录卡片：', '').trim() || fallbackLabel;
+      matchedStructuredLine = true;
+      continue;
+    }
+    if (line.startsWith('标签：') || line.startsWith('自动标签：')) {
+      structured.tags = uniqueList(
+        line
+          .replace('标签：', '')
+          .replace('自动标签：', '')
+          .split(/[\/、,，；;|]/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      );
       matchedStructuredLine = true;
       continue;
     }
@@ -229,15 +244,57 @@ function splitSectionSummary(summary: string, fallbackLabel: string): SectionSum
     const compact = truncateText(summary || fallbackLabel, 96);
     return {
       card: fallbackLabel,
+      tags: [],
       keywords: [],
       oneLine: compact,
     };
   }
   return {
     card: structured.card || fallbackLabel,
+    tags: structured.tags,
     keywords: structured.keywords,
     oneLine: structured.oneLine || truncateText(summary || fallbackLabel, 96),
   };
+}
+
+function deriveSummaryTags(
+  node: KnowledgeNode,
+  parts: SectionSummaryParts,
+  childSectionCount: number,
+  childItemCount: number,
+): string[] {
+  const tags: string[] = [];
+  const normalized = canonicalText(`${node.label} ${node.summary} ${node.detail} ${parts.keywords.join(' ')} ${parts.oneLine}`);
+  if (childSectionCount > 0) {
+    tags.push('目录层级');
+  }
+  if (childItemCount >= 3) {
+    tags.push('术语密集');
+  } else if (childItemCount > 0) {
+    tags.push('术语提要');
+  }
+  if (node.referenceIds.length > 0) {
+    tags.push('可追溯');
+  }
+  if (/(例如|比如|示例|example|such as)/i.test(normalized)) {
+    tags.push('示例型');
+  }
+  if (/(对比|反义|contrast|opposite|versus|vs\.)/i.test(normalized)) {
+    tags.push('对照型');
+  }
+  if (/(步骤|过程|方法|process|workflow|procedure|mechanism|encoding|retrieval)/i.test(normalized)) {
+    tags.push('过程型');
+  }
+  if (/(定义|表示|means|is|are|指|说明|解释)/i.test(normalized)) {
+    tags.push('定义型');
+  }
+  if (/(关系|联系|关联|related|graph|node|edge)/i.test(normalized)) {
+    tags.push('关系型');
+  }
+  if (node.kind === 'book') {
+    tags.push('目录根');
+  }
+  return uniqueList(tags).slice(0, 4);
 }
 
 function splitCitationPreview(citation: string): { source: string; path: string; context: string; original: string } {
@@ -285,6 +342,7 @@ type HoverPreview = {
   note?: string;
   x: number;
   y: number;
+  placement: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 };
 
 function buildGlossaryTree(graph: KnowledgeGraphData): GlossaryTreeIndex {
@@ -471,12 +529,15 @@ function App() {
   const glossaryIndex = buildGlossaryTree(graph);
   const isGlossaryView = viewMode === 'glossary';
 
-  function buildHoverPreviewPosition(clientX: number, clientY: number): { x: number; y: number } {
-    const x = Math.min(window.innerWidth - HOVER_PREVIEW_WIDTH - 16, clientX + HOVER_PREVIEW_OFFSET);
-    const y = Math.min(window.innerHeight - HOVER_PREVIEW_HEIGHT - 16, clientY + HOVER_PREVIEW_OFFSET);
+  function buildHoverPreviewPosition(clientX: number, clientY: number): { x: number; y: number; placement: HoverPreview['placement'] } {
+    const fitsRight = clientX + HOVER_PREVIEW_WIDTH + HOVER_PREVIEW_OFFSET + 16 <= window.innerWidth;
+    const fitsBottom = clientY + HOVER_PREVIEW_HEIGHT + HOVER_PREVIEW_OFFSET + 16 <= window.innerHeight;
+    const x = fitsRight ? clientX + HOVER_PREVIEW_OFFSET : clientX - HOVER_PREVIEW_WIDTH - HOVER_PREVIEW_OFFSET;
+    const y = fitsBottom ? clientY + HOVER_PREVIEW_OFFSET : clientY - HOVER_PREVIEW_HEIGHT - HOVER_PREVIEW_OFFSET;
     return {
       x: Math.max(16, x),
       y: Math.max(16, y),
+      placement: `${fitsBottom ? 'bottom' : 'top'}-${fitsRight ? 'right' : 'left'}` as HoverPreview['placement'],
     };
   }
 
@@ -588,6 +649,44 @@ function App() {
   const detailNode = viewMode === 'glossary' ? glossarySelectedNode : selectedNode;
   const detailParts = detailNode ? splitDetail(detailNode.detail) : { narrative: '', citations: [] as string[] };
   const detailSummaryParts = detailNode && isGlossaryView ? splitSectionSummary(detailNode.summary, detailNode.label) : null;
+  const detailSummaryTags =
+    detailNode && detailSummaryParts
+      ? detailSummaryParts.tags.length > 0
+        ? detailSummaryParts.tags
+        : deriveSummaryTags(
+            detailNode,
+            detailSummaryParts,
+            glossaryChildSections.length,
+            glossaryChildItems.length,
+          )
+      : [];
+
+  const citationPreviewLayer =
+    citationPreview && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            className="citation-preview-card"
+            data-placement={citationPreview.placement}
+            aria-live="polite"
+            style={{
+              left: `${citationPreview.x}px`,
+              top: `${citationPreview.y}px`,
+              opacity: 1,
+            }}
+          >
+            <div className="citation-preview-head">
+              <div>
+                <p className="citation-preview-kicker">悬停预览</p>
+                <strong>{citationPreview.title}</strong>
+              </div>
+              <span>{citationPreview.subtitle}</span>
+            </div>
+            <p className="citation-preview-body">{citationPreview.body}</p>
+            {citationPreview.note ? <p className="citation-preview-note">{citationPreview.note}</p> : null}
+          </div>,
+          document.body,
+        )
+      : null;
 
   async function importRawText(text: string, origin: string, type: 'text' | 'pdf') {
     const trimmed = text.trim();
@@ -813,7 +912,10 @@ function App() {
             onMouseEnter={(event) => showReferencePreview(target, event.clientX, event.clientY)}
             onMouseMove={(event) => updatePreviewPosition(event.clientX, event.clientY)}
             onMouseLeave={() => setCitationPreview(null)}
-            onFocus={(event) => showReferencePreview(target, event.currentTarget.getBoundingClientRect().left, event.currentTarget.getBoundingClientRect().top)}
+            onFocus={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              showReferencePreview(target, rect.left + rect.width / 2, rect.top + rect.height / 2);
+            }}
             onBlur={() => setCitationPreview(null)}
           >
             <span className="anchor-chip-kind">{kindLabel(target.kind)}</span>
@@ -848,7 +950,10 @@ function App() {
               onMouseEnter={(event) => showCitationPreview(citation, target, event.clientX, event.clientY)}
               onMouseMove={(event) => updatePreviewPosition(event.clientX, event.clientY)}
               onMouseLeave={() => setCitationPreview(null)}
-              onFocus={(event) => showCitationPreview(citation, target, event.currentTarget.getBoundingClientRect().left, event.currentTarget.getBoundingClientRect().top)}
+              onFocus={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                showCitationPreview(citation, target, rect.left + rect.width / 2, rect.top + rect.height / 2);
+              }}
               onBlur={() => setCitationPreview(null)}
             >
               <span className="citation">{citation}</span>
@@ -897,6 +1002,9 @@ function App() {
     const isOpen = depth === 0 || expandedGlossaryIds.includes(section.node.id);
     const detailParts = splitDetail(section.node.detail);
     const summaryParts = splitSectionSummary(section.node.summary, section.node.label);
+    const summaryTags = summaryParts.tags.length > 0
+      ? summaryParts.tags
+      : deriveSummaryTags(section.node, summaryParts, section.children.length, section.items.length);
     const summaryKeywords = summaryParts.keywords.length > 0
       ? summaryParts.keywords
       : uniqueList([...section.children.map((child) => child.node.label), ...section.items.map((item) => item.label)]).slice(0, 4);
@@ -932,11 +1040,25 @@ function App() {
           <div className="glossary-section-body">
             <div className="glossary-section-summary">
               <div className="summary-card">
-                <div className="summary-card-grid">
-                  <article className="summary-mini-card summary-mini-card-main">
-                    <span className="summary-card-kicker">目录卡片</span>
-                    <strong>{summaryParts.card}</strong>
-                    <p>{summaryParts.oneLine || detailParts.narrative || section.node.summary}</p>
+                <article className="summary-mini-card summary-mini-card-main">
+                  <span className="summary-card-kicker">目录卡片</span>
+                  <strong>{summaryParts.card}</strong>
+                  <p>{summaryParts.oneLine || detailParts.narrative || section.node.summary}</p>
+                </article>
+                <div className="summary-mini-row">
+                  <article className="summary-mini-card summary-mini-card-tags">
+                    <span className="summary-card-kicker">自动标签</span>
+                    <div className="summary-tag-grid">
+                      {summaryTags.length > 0 ? (
+                        summaryTags.map((tag) => (
+                          <span key={tag} className="summary-tag-pill">
+                            {tag}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="muted">暂无标签</span>
+                      )}
+                    </div>
                   </article>
                   <article className="summary-mini-card summary-mini-card-keywords">
                     <span className="summary-card-kicker">关键词</span>
@@ -1520,11 +1642,25 @@ function App() {
                       </div>
                       {detailSummaryParts ? (
                         <div className="summary-card">
-                          <div className="summary-card-grid">
-                            <article className="summary-mini-card summary-mini-card-main">
-                              <span className="summary-card-kicker">目录卡片</span>
-                              <strong>{detailSummaryParts.card}</strong>
-                              <p>{detailSummaryParts.oneLine}</p>
+                          <article className="summary-mini-card summary-mini-card-main">
+                            <span className="summary-card-kicker">目录卡片</span>
+                            <strong>{detailSummaryParts.card}</strong>
+                            <p>{detailSummaryParts.oneLine}</p>
+                          </article>
+                          <div className="summary-mini-row">
+                            <article className="summary-mini-card summary-mini-card-tags">
+                              <span className="summary-card-kicker">自动标签</span>
+                              <div className="summary-tag-grid">
+                                {detailSummaryTags.length > 0 ? (
+                                  detailSummaryTags.map((tag) => (
+                                    <span key={tag} className="summary-tag-pill">
+                                      {tag}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="muted">暂无标签</span>
+                                )}
+                              </div>
                             </article>
                             <article className="summary-mini-card summary-mini-card-keywords">
                               <span className="summary-card-kicker">关键词</span>
@@ -1545,38 +1681,6 @@ function App() {
                         <p className="detail-summary">{detailNode.summary}</p>
                       )}
                     </section>
-
-                    <div
-                      className="citation-preview-card"
-                      aria-live="polite"
-                      style={
-                        citationPreview
-                          ? {
-                              left: `${citationPreview.x}px`,
-                              top: `${citationPreview.y}px`,
-                              opacity: 1,
-                            }
-                          : {
-                              opacity: 0,
-                            }
-                      }
-                    >
-                      {citationPreview ? (
-                        <>
-                          <div className="citation-preview-head">
-                            <div>
-                              <p className="citation-preview-kicker">悬停预览</p>
-                              <strong>{citationPreview.title}</strong>
-                            </div>
-                            <span>{citationPreview.subtitle}</span>
-                          </div>
-                          <p className="citation-preview-body">{citationPreview.body}</p>
-                          {citationPreview.note ? <p className="citation-preview-note">{citationPreview.note}</p> : null}
-                        </>
-                      ) : (
-                        <p className="muted">把鼠标移到引用锚点上，可以直接看到原句上下文。</p>
-                      )}
-                    </div>
 
                     <section className="reader-block reader-original">
                       <div className="reader-head">
@@ -1609,6 +1713,14 @@ function App() {
                                   type="button"
                                   className="anchor-chip"
                                   onClick={() => focusGlossaryNode(trailNode)}
+                                  onMouseEnter={(event) => showReferencePreview(trailNode, event.clientX, event.clientY)}
+                                  onMouseMove={(event) => updatePreviewPosition(event.clientX, event.clientY)}
+                                  onMouseLeave={() => setCitationPreview(null)}
+                                  onFocus={(event) => {
+                                    const rect = event.currentTarget.getBoundingClientRect();
+                                    showReferencePreview(trailNode, rect.left + rect.width / 2, rect.top + rect.height / 2);
+                                  }}
+                                  onBlur={() => setCitationPreview(null)}
                                 >
                                   <span className="anchor-chip-kind">{kindLabel(trailNode.kind)}</span>
                                   <strong>{trailNode.label}</strong>
@@ -1798,6 +1910,7 @@ function App() {
           </section>
         </aside>
       </main>
+      {citationPreviewLayer}
     </div>
   );
 }

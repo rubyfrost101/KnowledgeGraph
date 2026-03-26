@@ -32,6 +32,19 @@ def _search_nodes(graph: KnowledgeGraphData, query: str) -> list[tuple[Knowledge
     return scored
 
 
+def _summary_excerpt(summary: str) -> str:
+    lines = [line.strip() for line in summary.split("\n") if line.strip()]
+    if not lines:
+        return summary
+    for line in lines:
+        if line.startswith("一句话总结："):
+            return line.replace("一句话总结：", "").strip()
+    for line in lines:
+        if not line.startswith(("目录卡片：", "标签：", "自动标签：", "关键词：")):
+            return line
+    return lines[-1]
+
+
 def answer_question(graph: KnowledgeGraphData, request: QARequest) -> QAResponse:
     matches = _search_nodes(graph, request.question)
     primary = next((node for node, _ in matches), None)
@@ -66,7 +79,7 @@ def answer_question(graph: KnowledgeGraphData, request: QARequest) -> QAResponse
         ]
     )
     answer_parts = [
-        f'我先定位到“{primary.label}”。{primary.summary}',
+        f'我先定位到“{primary.label}”。{_summary_excerpt(primary.summary)}',
         f"它在图谱中常和 {top_related} 一起出现或形成对照。" if top_related else "",
         f"相关来源包括：{'；'.join(source_titles)}。" if source_titles else "",
     ]

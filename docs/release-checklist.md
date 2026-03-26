@@ -13,6 +13,7 @@ Use this checklist before promoting changes from `dev` to `qa`, or from `qa` to 
 ## QA branch
 
 - [ ] Merge only reviewed changes into `qa`
+- [ ] The PR uses [`.github/PULL_REQUEST_TEMPLATE/dev-to-qa.md`](../.github/PULL_REQUEST_TEMPLATE/dev-to-qa.md)
 - [ ] Verify import, graph browsing, Q&A, and delete / restore flows
 - [ ] Confirm no regression in backend upload / OCR / queue behavior
 - [ ] Confirm screenshots or UX changes match the intended design
@@ -24,6 +25,7 @@ Use this checklist before promoting changes from `dev` to `qa`, or from `qa` to 
 - [ ] No open blocking issues remain
 - [ ] Release notes are ready
 - [ ] If the change affects users, tag or announce the release
+- [ ] The PR uses [`.github/PULL_REQUEST_TEMPLATE/qa-to-main.md`](../.github/PULL_REQUEST_TEMPLATE/qa-to-main.md)
 
 ## Steam release line
 

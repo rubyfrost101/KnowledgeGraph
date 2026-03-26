@@ -30,6 +30,7 @@ flowchart LR
 - Validate Steam changes on `steam.qa`
 - Merge to `steam.main` only after Steam QA passes
 - Avoid direct commits to `main` and `steam.main`
+- Keep `qa -> main` promotions release-focused so the release template stays accurate
 
 ## Suggested workflow
 
@@ -44,15 +45,19 @@ flowchart LR
 - Use [`.github/pull_request_template.md`](./.github/pull_request_template.md) for every PR
 - Fill out the validation and risk sections before requesting review
 - Attach screenshots for any UI changes
+- Use [`.github/PULL_REQUEST_TEMPLATE/dev-to-qa.md`](./.github/PULL_REQUEST_TEMPLATE/dev-to-qa.md) for `dev -> qa` testing promotion PRs
+- Use [`.github/PULL_REQUEST_TEMPLATE/qa-to-main.md`](./.github/PULL_REQUEST_TEMPLATE/qa-to-main.md) for release promotion PRs from `qa` to `main`
 
 ## Release checklist
 
 - Use [`docs/release-checklist.md`](./docs/release-checklist.md) before promoting a branch
 - `dev -> qa -> main` should only happen after the checklist passes
 - `steam.dev -> steam.qa -> steam.main` should use the Steam section of the same checklist
+- Use [`docs/branch-protection.md`](./docs/branch-protection.md) to configure GitHub required checks and branch protection
 
 ## Notes for this project
 
 - `dev` stays close to the knowledge-graph product
 - `steam.dev` can diverge into a more game-like UI and interaction model
 - Shared core logic should be merged or cherry-picked deliberately so the two lines do not drift accidentally
+- Use [`docs/steam-game-design.md`](./docs/steam-game-design.md) as the product direction reference for the Steam line

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "cross-env NEXT_DISABLE_DEVTOOLS=1 next dev",
     "build": "next build",
     "start": "next start"
   },
@@ -20,7 +20,8 @@
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.7.3",
-    "eslint": "^9.22.0"
+    "cross-env": "^10.1.0",
+    "eslint": "^9.22.0",
+    "typescript": "^5.7.3"
   }
 }

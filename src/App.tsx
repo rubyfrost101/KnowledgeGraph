@@ -25,6 +25,9 @@ import {
 
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 820;
+const HOVER_PREVIEW_OFFSET = 18;
+const HOVER_PREVIEW_WIDTH = 320;
+const HOVER_PREVIEW_HEIGHT = 180;
 
 const quickQuestions = [
   '什么是 collocation？',
@@ -280,6 +283,8 @@ type HoverPreview = {
   subtitle: string;
   body: string;
   note?: string;
+  x: number;
+  y: number;
 };
 
 function buildGlossaryTree(graph: KnowledgeGraphData): GlossaryTreeIndex {
@@ -465,6 +470,15 @@ function App() {
   const [busy, setBusy] = useState(false);
   const glossaryIndex = buildGlossaryTree(graph);
   const isGlossaryView = viewMode === 'glossary';
+
+  function buildHoverPreviewPosition(clientX: number, clientY: number): { x: number; y: number } {
+    const x = Math.min(window.innerWidth - HOVER_PREVIEW_WIDTH - 16, clientX + HOVER_PREVIEW_OFFSET);
+    const y = Math.min(window.innerHeight - HOVER_PREVIEW_HEIGHT - 16, clientY + HOVER_PREVIEW_OFFSET);
+    return {
+      x: Math.max(16, x),
+      y: Math.max(16, y),
+    };
+  }
 
   useEffect(() => {
     const selectedExists = graph.nodes.some((node) => node.id === selectedId);
@@ -755,24 +769,30 @@ function App() {
     }
   }
 
-  function showReferencePreview(target: KnowledgeNode) {
+  function showReferencePreview(target: KnowledgeNode, clientX: number, clientY: number) {
     const detailParts = splitDetail(target.detail);
     setCitationPreview({
       title: target.label,
       subtitle: `${kindLabel(target.kind)} · ${target.category}`,
       body: truncateText(detailParts.narrative || target.summary || target.detail, 220),
       note: target.referenceIds.length > 0 ? '来源锚点可继续跳转到上级目录。' : '当前节点没有更上层的引用锚点。',
+      ...buildHoverPreviewPosition(clientX, clientY),
     });
   }
 
-  function showCitationPreview(citation: string, target: KnowledgeNode | null) {
+  function showCitationPreview(citation: string, target: KnowledgeNode | null, clientX: number, clientY: number) {
     const parsed = splitCitationPreview(citation);
     setCitationPreview({
       title: target?.label ?? parsed.source ?? '引用预览',
       subtitle: target ? `${kindLabel(target.kind)} · ${target.category}` : parsed.path || parsed.source || '引用来源',
       body: truncateText(parsed.context || parsed.original || target?.summary || citation, 240),
       note: parsed.original && parsed.original !== parsed.context ? `原句：${parsed.original}` : undefined,
+      ...buildHoverPreviewPosition(clientX, clientY),
     });
+  }
+
+  function updatePreviewPosition(clientX: number, clientY: number) {
+    setCitationPreview((current) => (current ? { ...current, ...buildHoverPreviewPosition(clientX, clientY) } : current));
   }
 
   function renderReferenceChips(referenceIds: string[], label = '来源锚点') {
@@ -790,9 +810,10 @@ function App() {
             className="anchor-chip"
             type="button"
             onClick={() => focusGlossaryReference(target.id)}
-            onMouseEnter={() => showReferencePreview(target)}
+            onMouseEnter={(event) => showReferencePreview(target, event.clientX, event.clientY)}
+            onMouseMove={(event) => updatePreviewPosition(event.clientX, event.clientY)}
             onMouseLeave={() => setCitationPreview(null)}
-            onFocus={() => showReferencePreview(target)}
+            onFocus={(event) => showReferencePreview(target, event.currentTarget.getBoundingClientRect().left, event.currentTarget.getBoundingClientRect().top)}
             onBlur={() => setCitationPreview(null)}
           >
             <span className="anchor-chip-kind">{kindLabel(target.kind)}</span>
@@ -824,9 +845,10 @@ function App() {
               type="button"
               className="citation-line citation-button"
               onClick={() => focusGlossaryNode(target)}
-              onMouseEnter={() => showCitationPreview(citation, target)}
+              onMouseEnter={(event) => showCitationPreview(citation, target, event.clientX, event.clientY)}
+              onMouseMove={(event) => updatePreviewPosition(event.clientX, event.clientY)}
               onMouseLeave={() => setCitationPreview(null)}
-              onFocus={() => showCitationPreview(citation, target)}
+              onFocus={(event) => showCitationPreview(citation, target, event.currentTarget.getBoundingClientRect().left, event.currentTarget.getBoundingClientRect().top)}
               onBlur={() => setCitationPreview(null)}
             >
               <span className="citation">{citation}</span>
@@ -910,22 +932,27 @@ function App() {
           <div className="glossary-section-body">
             <div className="glossary-section-summary">
               <div className="summary-card">
-                <div className="summary-card-head">
-                  <span className="summary-card-kicker">目录卡片</span>
-                  <strong>{summaryParts.card}</strong>
+                <div className="summary-card-grid">
+                  <article className="summary-mini-card summary-mini-card-main">
+                    <span className="summary-card-kicker">目录卡片</span>
+                    <strong>{summaryParts.card}</strong>
+                    <p>{summaryParts.oneLine || detailParts.narrative || section.node.summary}</p>
+                  </article>
+                  <article className="summary-mini-card summary-mini-card-keywords">
+                    <span className="summary-card-kicker">关键词</span>
+                    <div className="summary-keyword-grid">
+                      {summaryKeywords.length > 0 ? (
+                        summaryKeywords.map((keyword) => (
+                          <span key={keyword} className="summary-keyword-pill">
+                            {keyword}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="muted">暂无关键词</span>
+                      )}
+                    </div>
+                  </article>
                 </div>
-                <div className="summary-keyword-row">
-                  {summaryKeywords.length > 0 ? (
-                    summaryKeywords.map((keyword) => (
-                      <span key={keyword} className="summary-keyword-pill">
-                        {keyword}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="muted">暂无关键词</span>
-                  )}
-                </div>
-                <p>{summaryParts.oneLine || detailParts.narrative || section.node.summary}</p>
               </div>
               {section.node.referenceIds.length > 0 ? renderReferenceChips(section.node.referenceIds) : null}
               {renderCitationChips(detailParts.citations, section.node)}
@@ -1493,28 +1520,47 @@ function App() {
                       </div>
                       {detailSummaryParts ? (
                         <div className="summary-card">
-                          <div className="summary-card-head">
-                            <span className="summary-card-kicker">目录卡片</span>
-                            <strong>{detailSummaryParts.card}</strong>
+                          <div className="summary-card-grid">
+                            <article className="summary-mini-card summary-mini-card-main">
+                              <span className="summary-card-kicker">目录卡片</span>
+                              <strong>{detailSummaryParts.card}</strong>
+                              <p>{detailSummaryParts.oneLine}</p>
+                            </article>
+                            <article className="summary-mini-card summary-mini-card-keywords">
+                              <span className="summary-card-kicker">关键词</span>
+                              <div className="summary-keyword-grid">
+                                {(detailSummaryParts.keywords.length > 0
+                                  ? detailSummaryParts.keywords
+                                  : uniqueList([...glossaryChildSections.map((node) => node.label), ...glossaryChildItems.map((node) => node.label)]).slice(0, 4)
+                                ).map((keyword) => (
+                                  <span key={keyword} className="summary-keyword-pill">
+                                    {keyword}
+                                  </span>
+                                ))}
+                              </div>
+                            </article>
                           </div>
-                          <div className="summary-keyword-row">
-                            {(detailSummaryParts.keywords.length > 0
-                              ? detailSummaryParts.keywords
-                              : uniqueList([...glossaryChildSections.map((node) => node.label), ...glossaryChildItems.map((node) => node.label)]).slice(0, 4)
-                            ).map((keyword) => (
-                              <span key={keyword} className="summary-keyword-pill">
-                                {keyword}
-                              </span>
-                            ))}
-                          </div>
-                          <p>{detailSummaryParts.oneLine}</p>
                         </div>
                       ) : (
                         <p className="detail-summary">{detailNode.summary}</p>
                       )}
                     </section>
 
-                    <div className="citation-preview-card" aria-live="polite">
+                    <div
+                      className="citation-preview-card"
+                      aria-live="polite"
+                      style={
+                        citationPreview
+                          ? {
+                              left: `${citationPreview.x}px`,
+                              top: `${citationPreview.y}px`,
+                              opacity: 1,
+                            }
+                          : {
+                              opacity: 0,
+                            }
+                      }
+                    >
                       {citationPreview ? (
                         <>
                           <div className="citation-preview-head">

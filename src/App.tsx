@@ -37,8 +37,6 @@ const quickQuestions = [
   '工业革命最重要的节点是什么？',
 ];
 
-type AppSkin = 'standard' | 'steam';
-
 type SteamCampaign = {
   id: string;
   title: string;
@@ -64,6 +62,8 @@ type SteamQuiz = {
   correctIndex: number;
   explanation: string;
 };
+
+type SteamScene = 'lobby' | 'map' | 'stage';
 
 const backendConfigured = isBackendConfigured();
 
@@ -424,6 +424,19 @@ function buildSteamQuiz(chapter: SteamChapter, chapters: SteamChapter[]): SteamQ
   };
 }
 
+function steamSceneLabel(scene: SteamScene): string {
+  switch (scene) {
+    case 'lobby':
+      return '战役大厅';
+    case 'map':
+      return '章节地图';
+    case 'stage':
+      return '关卡页面';
+    default:
+      return scene;
+  }
+}
+
 function latestVisibleDocumentId(documents: KnowledgeDocument[]): string {
   const visible = documents.filter((document) => document.status !== 'deleted');
   const sorted = [...visible].sort((left, right) => {
@@ -767,7 +780,6 @@ function App() {
   const [status, setStatus] = useState('准备就绪，先试试示例图谱。');
   const [importTextValue, setImportTextValue] = useState('');
   const [viewMode, setViewMode] = useState<'graph' | 'glossary'>('graph');
-  const [appSkin, setAppSkin] = useState<AppSkin>('standard');
   const [citationPreview, setCitationPreview] = useState<HoverPreview | null>(null);
   const [searchMatches, setSearchMatches] = useState<KnowledgeNode[]>([]);
   const [expandedGlossaryIds, setExpandedGlossaryIds] = useState<string[]>([]);
@@ -777,19 +789,21 @@ function App() {
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>([]);
   const [steamActiveCampaignId, setSteamActiveCampaignId] = useState('');
   const [steamActiveChapterId, setSteamActiveChapterId] = useState('');
+  const [steamScene, setSteamScene] = useState<SteamScene>('lobby');
   const [steamLanguageMode, setSteamLanguageMode] = useState<'dual' | 'original' | 'translation'>('dual');
   const [steamSelectedOption, setSteamSelectedOption] = useState<number | null>(null);
   const [steamClearedChapterIds, setSteamClearedChapterIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const glossaryIndex = buildGlossaryTree(graph);
   const isGlossaryView = viewMode === 'glossary';
-  const isSteamSkin = appSkin === 'steam';
+  const isSteamSkin = true;
   const steamCampaigns = deriveSteamCampaigns(graph);
   const steamActiveCampaign =
     steamCampaigns.find((campaign) => campaign.id === steamActiveCampaignId) ?? steamCampaigns[0] ?? null;
   const steamChapters = deriveSteamChapters(graph, steamActiveCampaign);
   const steamActiveChapter =
     steamChapters.find((chapter) => chapter.id === steamActiveChapterId) ?? steamChapters[0] ?? null;
+  const steamActiveChapterIndex = steamActiveChapter ? steamChapters.findIndex((chapter) => chapter.id === steamActiveChapter.id) : -1;
   const steamQuiz = steamActiveChapter ? buildSteamQuiz(steamActiveChapter, steamChapters) : null;
 
   function buildHoverPreviewPosition(clientX: number, clientY: number): { x: number; y: number; placement: HoverPreview['placement'] } {
@@ -851,24 +865,11 @@ function App() {
     if (typeof window === 'undefined') {
       return;
     }
-    const storedSkin = window.localStorage.getItem('knowledgegraph.skin');
-    if (storedSkin === 'standard' || storedSkin === 'steam') {
-      setAppSkin(storedSkin);
+    const storedScene = window.localStorage.getItem('knowledgegraph.steam.scene');
+    if (storedScene === 'lobby' || storedScene === 'map' || storedScene === 'stage') {
+      setSteamScene(storedScene);
     }
   }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    window.localStorage.setItem('knowledgegraph.skin', appSkin);
-    document.body.dataset.skin = appSkin;
-    return () => {
-      if (document.body.dataset.skin === appSkin) {
-        delete document.body.dataset.skin;
-      }
-    };
-  }, [appSkin]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -953,6 +954,13 @@ function App() {
     }
     window.localStorage.setItem('knowledgegraph.steam.cleared', JSON.stringify(steamClearedChapterIds));
   }, [steamClearedChapterIds]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('knowledgegraph.steam.scene', steamScene);
+  }, [steamScene]);
 
   useEffect(() => {
     setBookmarkedIds((current) => {
@@ -1068,20 +1076,35 @@ function App() {
   const steamAnchors = graph.nodes.filter((node) => node.referenceIds.length > 0).length;
   const steamHeat = selectedEdges.length;
   const steamUnlockedDocs = graph.documents.length;
+  const steamSceneTitle = steamSceneLabel(steamScene);
+  const steamSceneDescription =
+    steamScene === 'lobby'
+      ? '从这里上传 PDF，启动一场新的知识战役。'
+      : steamScene === 'map'
+        ? '沿着章节地图前进，挑选下一段路线。'
+        : '进入当前章节，解题、解锁翻译卡并推进战役。';
+  const steamSceneObjective =
+    steamScene === 'lobby'
+      ? '上传一本书，生成战役。'
+      : steamScene === 'map'
+        ? '选择一条章节路线继续推进。'
+        : steamTranslationUnlocked
+          ? '翻译卡已解锁，可以继续推进下一章。'
+          : '完成题目，解锁翻译卡。';
   const steamStages = [
     {
-      title: '关卡 1 · 点亮图谱',
-      subtitle: `${graph.nodes.length} 个知识点`,
+      title: '关卡 1 · 战役点火',
+      subtitle: `${graph.nodes.length} 个知识碎片`,
       unlocked: graph.nodes.length >= 5,
     },
     {
-      title: '关卡 2 · 锚点追踪',
+      title: '关卡 2 · 路线追踪',
       subtitle: `${steamAnchors} 个可追溯锚点`,
       unlocked: steamAnchors > 0,
     },
     {
-      title: '关卡 3 · 连线打通',
-      subtitle: `${steamHeat} 条邻接关系`,
+      title: '关卡 3 · 章节突破',
+      subtitle: `${steamHeat} 条关卡连接`,
       unlocked: steamHeat >= 3,
     },
   ];
@@ -1187,6 +1210,7 @@ function App() {
           if (campaignId) {
             setSteamActiveCampaignId(campaignId);
             setSteamActiveChapterId('');
+            setSteamScene('map');
           }
         }
         setStatus(result.summary);
@@ -1208,6 +1232,7 @@ function App() {
           if (campaignId) {
             setSteamActiveCampaignId(campaignId);
             setSteamActiveChapterId(result.batch.nodes[0]?.id ?? '');
+            setSteamScene('map');
           }
         }
         setStatus(result.summary);
@@ -1257,6 +1282,7 @@ function App() {
           if (campaignId) {
             setSteamActiveCampaignId(campaignId);
             setSteamActiveChapterId('');
+            setSteamScene('map');
           }
         }
         setStatus(currentJob.summary || '文件已导入。');
@@ -1276,6 +1302,7 @@ function App() {
           if (campaignId) {
             setSteamActiveCampaignId(campaignId);
             setSteamActiveChapterId(result.batch.nodes[0]?.id ?? '');
+            setSteamScene('map');
           }
         }
         setStatus(
@@ -1326,6 +1353,7 @@ function App() {
     setBookmarkedIds([]);
     setSteamActiveCampaignId('');
     setSteamActiveChapterId('');
+    setSteamScene('lobby');
     setSteamSelectedOption(null);
     setSteamClearedChapterIds([]);
     setStatus('已恢复示例图谱。');
@@ -1334,6 +1362,9 @@ function App() {
   function applySearchSelection(node: KnowledgeNode) {
     setSelectedId(node.id);
     setQuery(node.label);
+    if (isSteamSkin) {
+      setSteamScene('stage');
+    }
     setStatus(`已聚焦到“${node.label}”。`);
   }
 
@@ -1371,11 +1402,14 @@ function App() {
     scrollGlossaryNodeIntoView(node.id);
   }
 
-  function focusGlossaryReference(referenceId: string) {
-    const target = glossaryIndex.nodesById.get(referenceId);
-    if (target) {
-      focusGlossaryNode(target);
+  function focusReferenceNode(node: KnowledgeNode) {
+    if (isSteamSkin) {
+      setSelectedId(node.id);
+      setSteamScene('stage');
+      setStatus(`已定位到“${node.label}”。`);
+      return;
     }
+    focusGlossaryNode(node);
   }
 
   function toggleBookmark(node: KnowledgeNode) {
@@ -1414,8 +1448,8 @@ function App() {
     if (firstChapterId) {
       setSteamActiveChapterId(firstChapterId);
       setSelectedId(firstChapterId);
-      setViewMode('graph');
     }
+    setSteamScene('map');
     setSteamSelectedOption(null);
     setStatus(`已开始战役「${campaign.title}」。`);
   }
@@ -1423,7 +1457,7 @@ function App() {
   function focusSteamChapter(chapterId: string) {
     setSteamActiveChapterId(chapterId);
     setSelectedId(chapterId);
-    setViewMode('graph');
+    setSteamScene('stage');
     setSteamSelectedOption(null);
     const chapter = steamChapters.find((item) => item.id === chapterId);
     if (chapter) {
@@ -1495,7 +1529,7 @@ function App() {
             key={target.id}
             className="anchor-chip"
             type="button"
-            onClick={() => focusGlossaryReference(target.id)}
+            onClick={() => focusReferenceNode(target)}
             onMouseEnter={(event) => showReferencePreview(target, event.clientX, event.clientY)}
             onMouseMove={(event) => updatePreviewPosition(event.clientX, event.clientY)}
             onMouseLeave={() => setCitationPreview(null)}
@@ -1533,7 +1567,7 @@ function App() {
               key={citation}
               type="button"
               className="citation-line citation-button"
-              onClick={() => focusGlossaryNode(target)}
+              onClick={() => focusReferenceNode(target)}
               onMouseEnter={(event) => showCitationPreview(citation, target, event.clientX, event.clientY)}
               onMouseMove={(event) => updatePreviewPosition(event.clientX, event.clientY)}
               onMouseLeave={() => setCitationPreview(null)}
@@ -1707,19 +1741,15 @@ function App() {
   }
 
   return (
-    <div className={`app-shell ${isSteamSkin ? 'is-steam' : ''}`}>
+    <div className="app-shell is-steam">
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
 
       <header className="topbar">
         <div>
           <p className="eyebrow">KnowledgeGraph</p>
-          <h1>把书、词典和课堂笔记变成会“关联思考”的知识图谱。</h1>
-          <p className="topbar-copy">
-            {isSteamSkin
-              ? 'Steam 预览把知识工作台包装成任务日志、探索进度和图鉴收集。'
-              : '当前是正式工作台视图，适合导入、抽取、浏览和问答。'}
-          </p>
+          <h1>把书、词典和课堂笔记变成一场可以推进的知识战役。</h1>
+          <p className="topbar-copy">Steam 版把知识抽取引擎变成战役大厅、章节地图和关卡页面。上传一本书，就能开始闯关。</p>
         </div>
         <div className="topbar-meta">
           <div className="metric">
@@ -1734,10 +1764,10 @@ function App() {
             <span>文档</span>
             <strong>{graph.documents.length}</strong>
           </div>
-          <button className={`mode-toggle ${isSteamSkin ? 'is-active' : ''}`} type="button" onClick={() => setAppSkin(isSteamSkin ? 'standard' : 'steam')}>
-            <span>{isSteamSkin ? 'Steam 模式' : '标准模式'}</span>
-            <strong>{isSteamSkin ? '返回工作台' : '切到 Steam 预览'}</strong>
-          </button>
+          <div className="metric">
+            <span>模式</span>
+            <strong>{steamSceneTitle}</strong>
+          </div>
         </div>
       </header>
 
@@ -1746,8 +1776,8 @@ function App() {
           <section className="card">
             <div className="card-head">
               <div>
-                <p className="card-kicker">Library</p>
-                <h2>导入入口</h2>
+                <p className="card-kicker">Campaign Entry</p>
+                <h2>战役入口</h2>
               </div>
               <button className="ghost-button" type="button" onClick={resetDemo}>
                 恢复示例
@@ -1797,12 +1827,12 @@ function App() {
           <section className="card">
             <div className="card-head">
               <div>
-                <p className="card-kicker">Search</p>
-                <h2>快速定位</h2>
+                <p className="card-kicker">Archive Search</p>
+                <h2>档案检索</h2>
               </div>
             </div>
             <label className="field">
-              <span>搜索知识点</span>
+              <span>搜索战役知识点</span>
               <input
                 type="text"
                 value={query}
@@ -1812,7 +1842,7 @@ function App() {
             </label>
             <div className="search-results">
               {searchMatches.length === 0 ? (
-                <p className="muted">输入后会显示候选节点。</p>
+                <p className="muted">输入后会显示候选档案。</p>
               ) : (
                 searchMatches.map((node) => (
                   <button
@@ -1832,15 +1862,15 @@ function App() {
           <section className="card">
             <div className="card-head">
               <div>
-                <p className="card-kicker">Bookmarks</p>
-                <h2>收藏夹</h2>
+                <p className="card-kicker">Codex</p>
+                <h2>图鉴收藏</h2>
               </div>
               <button className="ghost-button" type="button" onClick={() => setBookmarkedIds([])} disabled={bookmarkedNodes.length === 0}>
                 清空
               </button>
             </div>
             {bookmarkedNodes.length === 0 ? (
-              <p className="muted">把重要节点收藏起来，后面可以随时回到这里。</p>
+              <p className="muted">把重要节点收藏起来，后面可以随时回到图鉴里。</p>
             ) : (
               <div className="bookmark-list">
                 {bookmarkedNodes.map((node) => {
@@ -1884,8 +1914,8 @@ function App() {
                   <button className="primary-button" type="button" onClick={openSteamUploadPicker}>
                     上传 PDF，开始战役
                   </button>
-                  <button className="ghost-button" type="button" onClick={() => setViewMode('glossary')}>
-                    查看图鉴
+                  <button className="ghost-button" type="button" onClick={() => setSteamScene('map')}>
+                    进入章节地图
                   </button>
                 </div>
                 <div className="steam-landing-metrics">
@@ -1910,13 +1940,13 @@ function App() {
                   </article>
                   <article className="steam-step">
                     <span>02</span>
-                    <strong>选择章节关卡</strong>
-                    <p>每一章都是一个关卡，先看摘要，再解锁原文和翻译卡。</p>
+                    <strong>打开章节地图</strong>
+                    <p>沿着路线选择章节，找到本次战役的推进顺序。</p>
                   </article>
                   <article className="steam-step">
                     <span>03</span>
-                    <strong>完成题目挑战</strong>
-                    <p>答对后会解锁翻译卡，并把章节收入进度条。</p>
+                    <strong>进入关卡页面</strong>
+                    <p>答题、翻译、复习都在这一页完成，像打副本一样推进。</p>
                   </article>
                 </div>
                 <div className="steam-campaign-list">
@@ -2006,9 +2036,18 @@ function App() {
                       key={stage.title}
                       type="button"
                       className={`steam-stage ${stage.unlocked ? 'is-unlocked' : ''}`}
-                      onClick={() =>
-                        index === 0 ? setViewMode('graph') : index === 1 ? setViewMode('glossary') : setQuestion(quickQuestions[0])
-                      }
+                      onClick={() => {
+                        if (index === 0) {
+                          setSteamScene('lobby');
+                          return;
+                        }
+                        if (index === 1) {
+                          setSteamScene('map');
+                          return;
+                        }
+                        setSteamScene('stage');
+                        setQuestion(quickQuestions[0]);
+                      }}
                     >
                       <span className="steam-stage-index">0{index + 1}</span>
                       <div>
@@ -2028,13 +2067,13 @@ function App() {
                   ))}
                 </div>
                 <div className="steam-quest-list">
-                  <button className="steam-quest" type="button" onClick={() => setViewMode('graph')}>
-                    <strong>切回图谱模式</strong>
-                    <span>继续探索节点和邻域。</span>
+                  <button className="steam-quest" type="button" onClick={() => setSteamScene('lobby')}>
+                    <strong>返回战役大厅</strong>
+                    <span>重新选择一本书，或继续当前战役。</span>
                   </button>
-                  <button className="steam-quest" type="button" onClick={() => setViewMode('glossary')}>
-                    <strong>进入术语图鉴</strong>
-                    <span>查看目录树、标签和引用锚点。</span>
+                  <button className="steam-quest" type="button" onClick={() => setSteamScene('stage')}>
+                    <strong>直接进入关卡</strong>
+                    <span>继续当前章节，优先解锁翻译卡。</span>
                   </button>
                 </div>
               </section>
@@ -2044,8 +2083,8 @@ function App() {
           <section className="card task-card">
             <div className="card-head">
               <div>
-                <p className="card-kicker">Tasks</p>
-                <h2>任务中心</h2>
+                <p className="card-kicker">Mission Log</p>
+                <h2>任务日志</h2>
               </div>
               <button className="ghost-button" type="button" onClick={() => void syncRemoteCollections()} disabled={!backendConfigured || busy}>
                 刷新
@@ -2109,13 +2148,13 @@ function App() {
           <section className="card">
             <div className="card-head">
               <div>
-                <p className="card-kicker">Documents</p>
-                <h2>已导入文档</h2>
+                <p className="card-kicker">Archives</p>
+                <h2>战役卷宗</h2>
               </div>
             </div>
             <div className="search-results">
               {graph.documents.length === 0 ? (
-                <p className="muted">暂无文档。</p>
+                <p className="muted">暂无卷宗。</p>
               ) : (
                 graph.documents.map((document) => (
                   <div key={document.id} className="search-result">
@@ -2142,8 +2181,8 @@ function App() {
           <section className="card">
             <div className="card-head">
               <div>
-                <p className="card-kicker">Recycle Bin</p>
-                <h2>回收站</h2>
+                <p className="card-kicker">Recovery</p>
+                <h2>战役回收站</h2>
               </div>
               <button className="ghost-button" type="button" onClick={() => void syncRemoteCollections()} disabled={!backendConfigured || busy}>
                 同步
@@ -2233,192 +2272,183 @@ function App() {
           </section>
         </aside>
 
-        <section className="canvas-panel">
+        <section className="canvas-panel steam-stageboard">
           <div className="canvas-toolbar">
             <div>
-              <p className="card-kicker">Graph</p>
-              <h2>{viewMode === 'glossary' ? '术语表' : selectedLayoutNode ? selectedLayoutNode.label : '选择一个知识点'}</h2>
+              <p className="card-kicker">Steam Mode</p>
+              <h2>{steamSceneTitle}</h2>
             </div>
             <div className="toolbar-actions">
-              <div className="view-toggle">
-                <button
-                  className={`view-tab ${viewMode === 'graph' ? 'is-active' : ''}`}
-                  type="button"
-                  onClick={() => setViewMode('graph')}
-                >
-                  图谱
-                </button>
-                <button
-                  className={`view-tab ${viewMode === 'glossary' ? 'is-active' : ''}`}
-                  type="button"
-                  onClick={() => setViewMode('glossary')}
-                >
-                  术语表
-                </button>
+              <div className="steam-scene-tabs">
+                {(['lobby', 'map', 'stage'] as SteamScene[]).map((scene) => (
+                  <button
+                    key={scene}
+                    className={`view-tab steam-scene-tab ${steamScene === scene ? 'is-active' : ''}`}
+                    type="button"
+                    onClick={() => setSteamScene(scene)}
+                  >
+                    {steamSceneLabel(scene)}
+                  </button>
+                ))}
               </div>
               <div className="toolbar-badges">
-                <span>{selectedNode ? kindLabel(selectedNode.kind) : '无选中'}</span>
-                <span>{selectedNode?.category ?? '待聚焦'}</span>
-                <span>{backendConfigured ? '后端模式' : '本地模式'}</span>
+                <span>{steamActiveCampaign?.title ?? '尚未开启战役'}</span>
+                <span>{steamActiveChapter ? `章节 ${steamActiveChapterIndex + 1}` : '等待章节'}</span>
+                <span>{steamSceneObjective}</span>
                 <span>{busy ? '处理中' : status}</span>
               </div>
             </div>
           </div>
 
-          <div className={`graph-shell ${isGlossaryView ? 'is-glossary' : ''}`}>
-            {viewMode === 'graph' ? (
-              <svg
-                className="graph-svg"
-                viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
-                role="img"
-                aria-label="Knowledge graph"
-              >
-                <defs>
-                  <linearGradient id="edgeGradient" x1="0%" x2="100%" y1="0%" y2="0%">
-                    <stop offset="0%" stopColor="rgba(125, 150, 255, 0.08)" />
-                    <stop offset="100%" stopColor="rgba(240, 158, 100, 0.75)" />
-                  </linearGradient>
-                  <filter id="nodeGlow" x="-60%" y="-60%" width="220%" height="220%">
-                    <feGaussianBlur stdDeviation="8" result="blur" />
-                    <feColorMatrix
-                      in="blur"
-                      type="matrix"
-                      values="1 0 0 0 0.2 0 1 0 0 0.3 0 0 1 0 0.6 0 0 0 0.9 0"
-                    />
-                    <feMerge>
-                      <feMergeNode />
-                      <feMergeNode in="SourceGraphic" />
-                    </feMerge>
-                  </filter>
-                </defs>
-
-                {layout.edges.map((edge) => {
-                  const source = layout.nodes.find((node) => node.id === edge.source);
-                  const target = layout.nodes.find((node) => node.id === edge.target);
-                  if (!source || !target) {
-                    return null;
-                  }
-                  const active = selectedId ? edge.source === selectedId || edge.target === selectedId : false;
-                  const neutral = selectedId ? !active : false;
-                  return (
-                    <g key={edge.id} className={`edge-group ${neutral ? 'is-dimmed' : ''}`}>
-                      <line
-                        x1={source.x ?? 0}
-                        y1={source.y ?? 0}
-                        x2={target.x ?? 0}
-                        y2={target.y ?? 0}
-                        className={`edge-line ${relationTone(edge.kind)} ${active ? 'is-active' : ''}`}
-                      />
-                      {active ? (
-                        <text
-                          x={((source.x ?? 0) + (target.x ?? 0)) / 2}
-                          y={((source.y ?? 0) + (target.y ?? 0)) / 2 - 6}
-                          className="edge-label"
-                        >
-                          {relationLabel(edge.kind)}
-                        </text>
-                      ) : null}
-                    </g>
-                  );
-                })}
-
-                {layout.nodes.map((node) => {
-                  const isSelected = node.id === selectedId;
-                  const isRelated = selectedId ? neighborhood?.adjacentIds.has(node.id) : true;
-                  const isHovered = hoveredId === node.id;
-                  const dimmed = selectedId ? !isSelected && !isRelated : false;
-                  const size = isSelected ? 34 : node.score > 2 ? 28 : 22;
-                  return (
-                    <g
-                      key={node.id}
-                      transform={`translate(${node.x ?? 0}, ${node.y ?? 0})`}
-                      className={`graph-node ${dimmed ? 'is-dimmed' : ''} ${isHovered ? 'is-hovered' : ''} ${isSelected ? 'is-selected' : ''}`}
-                      onClick={() => setSelectedId(node.id)}
-                      onMouseEnter={() => setHoveredId(node.id)}
-                      onMouseLeave={() => setHoveredId(null)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          setSelectedId(node.id);
-                        }
-                      }}
-                    >
-                      <circle r={size} className={`node-core ${nodeTone(node.kind)}`} filter={isSelected ? 'url(#nodeGlow)' : undefined} />
-                      <circle r={size + 9} className="node-halo" />
-                      <text className="node-label" y={size + 24}>
-                        {node.label}
-                      </text>
-                      <title>{node.summary}</title>
-                    </g>
-                  );
-                })}
-              </svg>
-            ) : (
-              <div className="glossary-shell">
-                <div className="glossary-tree">
-                  <div className="glossary-tree-head">
-                    <div>
-                      <h3>目录树</h3>
-                      <p>
-                        {glossaryIndex.roots.length} 个章节根 · {glossaryIndex.orphans.length} 条未归类术语
-                      </p>
-                    </div>
-                    <div className="tree-head-actions">
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={() => setExpandedGlossaryIds(glossaryIndex.roots.map((root) => root.node.id))}
-                      >
-                        展开根目录
-                      </button>
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={() => {
-                          setExpandedGlossaryIds([]);
-                          setStatus('已折叠目录树。');
-                        }}
-                      >
-                        折叠目录
-                      </button>
-                    </div>
+          <div className="steam-scene-shell">
+            {steamScene === 'lobby' ? (
+              <div className="steam-scene-view steam-scene-lobby">
+                <section className="steam-scene-banner steam-scene-banner--lobby">
+                  <div>
+                    <p className="card-kicker">Campaign Hall</p>
+                    <h3>{steamHeroTitle}</h3>
+                    <p>{steamSceneDescription}</p>
                   </div>
-                  <div className="glossary-tree-body">
-                    {glossaryIndex.roots.length === 0 ? (
-                      <p className="muted">暂无可展开的目录树，先导入一本带章节的文档。</p>
-                    ) : (
-                      glossaryIndex.roots.map((root) => renderGlossarySection(root))
-                    )}
-                    {glossaryIndex.orphans.length > 0 ? (
-                      <div className="glossary-orphans">
-                        <h4>未归类术语</h4>
-                        <div className="glossary-item-grid">
-                          {glossaryIndex.orphans.map((item) => {
-                            const itemParts = splitDetail(item.detail);
-                            return (
-                              <article
-                                key={item.id}
-                                id={`glossary-node-${item.id}`}
-                                className={`glossary-item ${selectedId === item.id ? 'is-selected' : ''}`}
-                              >
-                                <button className="glossary-item-main" type="button" onClick={() => focusGlossaryNode(item)}>
-                                  <div className="glossary-item-head">
-                                    <strong>{item.label}</strong>
-                                    <span>{kindLabel(item.kind)}</span>
-                                  </div>
-                                  <p>{itemParts.narrative || item.summary}</p>
-                                </button>
-                                {item.referenceIds.length > 0 ? renderReferenceChips(item.referenceIds) : null}
-                                {renderCitationChips(splitDetail(item.detail).citations.slice(0, 2), item)}
-                              </article>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : null}
+                  <div className="steam-scene-banner-meta">
+                    <span className="steam-badge">{steamHeroBadge}</span>
+                    <button className="primary-button" type="button" onClick={openSteamUploadPicker}>
+                      上传 PDF，启动战役
+                    </button>
                   </div>
+                </section>
+
+                <div className="steam-scene-grid">
+                  <article className="steam-scene-card">
+                    <span className="summary-card-kicker">路线指令</span>
+                    <strong>先找地图，再进关卡</strong>
+                    <p>上传后，战役会自动生成章节路线，你只需要点开下一段路。</p>
+                  </article>
+                  <article className="steam-scene-card">
+                    <span className="summary-card-kicker">当前目标</span>
+                    <strong>{steamSceneObjective}</strong>
+                    <p>{steamActiveCampaign ? steamActiveCampaign.summary : '这场战役还在等待第一本书。'}</p>
+                  </article>
+                  <article className="steam-scene-card">
+                    <span className="summary-card-kicker">战役选择</span>
+                    <div className="steam-mini-list">
+                      {steamCampaigns.slice(0, 3).map((campaign) => {
+                        const isActiveCampaign = steamActiveCampaign?.id === campaign.id;
+                        return (
+                          <button
+                            key={campaign.id}
+                            type="button"
+                            className={`steam-mini-campaign ${isActiveCampaign ? 'is-active' : ''}`}
+                            onClick={() => startSteamCampaign(campaign.id)}
+                          >
+                            <strong>{campaign.title}</strong>
+                            <span>{campaign.subtitle}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </article>
                 </div>
+              </div>
+            ) : steamScene === 'map' ? (
+              <div className="steam-scene-view steam-scene-map">
+                <section className="steam-scene-banner steam-scene-banner--map">
+                  <div>
+                    <p className="card-kicker">Chapter Map</p>
+                    <h3>{steamActiveCampaign?.title ?? '章节地图'}</h3>
+                    <p>{steamSceneDescription}</p>
+                  </div>
+                  <div className="steam-scene-banner-meta">
+                    <span className="steam-badge">{steamChapters.length} 章</span>
+                    <button className="ghost-button" type="button" onClick={() => setSteamScene('stage')} disabled={!steamActiveChapter}>
+                      进入当前关卡
+                    </button>
+                  </div>
+                </section>
+
+                <div className="steam-map-track">
+                  {steamChapters.length === 0 ? (
+                    <p className="muted">导入一本 PDF 后，章节地图会自动生成。</p>
+                  ) : (
+                    steamChapters.map((chapter, index) => {
+                      const isActiveChapter = steamActiveChapter?.id === chapter.id;
+                      const isCleared = steamClearedChapterIds.includes(chapter.id);
+                      return (
+                        <button
+                          key={chapter.id}
+                          type="button"
+                          className={`steam-map-node ${isActiveChapter ? 'is-active' : ''} ${isCleared ? 'is-cleared' : ''}`}
+                          onClick={() => focusSteamChapter(chapter.id)}
+                        >
+                          <span className="steam-map-index">0{index + 1}</span>
+                          <div>
+                            <strong>{chapter.title}</strong>
+                            <p>{chapter.summary}</p>
+                          </div>
+                          <span className="steam-map-state">{isCleared ? '已解锁' : '待挑战'}</span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="steam-scene-view steam-scene-stage">
+                <section className="steam-scene-banner steam-scene-banner--stage">
+                  <div>
+                    <p className="card-kicker">Stage Page</p>
+                    <h3>{steamActiveChapter?.title ?? '当前关卡'}</h3>
+                    <p>{steamActiveChapter ? steamActiveChapter.summary : '先在地图里选择一章，然后进入关卡。'}</p>
+                  </div>
+                  <div className="steam-scene-banner-meta">
+                    <span className="steam-badge">{steamTranslationUnlocked ? '翻译解锁' : '等待解锁'}</span>
+                    <button className="ghost-button" type="button" onClick={advanceSteamChapter} disabled={steamChapters.length === 0}>
+                      下一个关卡
+                    </button>
+                  </div>
+                </section>
+
+                {steamActiveChapter ? (
+                  <div className="steam-stage-grid">
+                    <article className="steam-stage-panel">
+                      <span className="summary-card-kicker">关卡提示</span>
+                      <strong>{steamSceneObjective}</strong>
+                      <p>{steamActiveChapter.note}</p>
+                      <div className="steam-stage-channel">
+                        <span className={`pill ${steamTranslationUnlocked ? 'pill-link' : ''}`}>
+                          {steamTranslationUnlocked ? '翻译卡已打开' : '完成答题后解锁翻译'}
+                        </span>
+                        <span className="pill">{steamActiveChapterIndex + 1}/{steamChapters.length || 1}</span>
+                      </div>
+                    </article>
+
+                    <article className="steam-stage-panel">
+                      <span className="summary-card-kicker">原文卡</span>
+                      <p className="steam-stage-copy">{steamActiveChapter.original}</p>
+                      <div className="steam-stage-channel">
+                        <button className="ghost-button" type="button" onClick={() => setSteamLanguageMode('original')}>
+                          看原文
+                        </button>
+                        <button className="ghost-button" type="button" onClick={() => setSteamLanguageMode('dual')}>
+                          双语
+                        </button>
+                        <button className="ghost-button" type="button" onClick={() => setSteamLanguageMode('translation')}>
+                          译文
+                        </button>
+                      </div>
+                    </article>
+
+                    <article className="steam-stage-panel">
+                      <span className="summary-card-kicker">翻译卡</span>
+                      <p className="steam-stage-copy">{steamTranslationUnlocked ? steamActiveChapter.translation : '翻译卡尚未解锁，请先完成题目挑战。'}</p>
+                      <div className="steam-stage-channel">
+                        <span className="pill">{steamQuizCorrect ? '已答对' : '待闯关'}</span>
+                        <span className="pill">{steamActiveChapter.note}</span>
+                      </div>
+                    </article>
+                  </div>
+                ) : (
+                  <p className="muted">选中一场战役，再进入章节地图选择关卡。</p>
+                )}
               </div>
             )}
           </div>
@@ -2428,8 +2458,8 @@ function App() {
           <section className="card">
             <div className="card-head">
               <div>
-                <p className="card-kicker">Detail</p>
-                <h2>{detailNode?.label ?? (isGlossaryView ? '引用详情' : '知识点详情')}</h2>
+                <p className="card-kicker">Battle Dossier</p>
+                <h2>{detailNode?.label ?? (isGlossaryView ? '引用档案' : '关卡档案')}</h2>
               </div>
               {detailNode ? (
                 <button
@@ -2446,7 +2476,7 @@ function App() {
             {isSteamSkin ? (
               <div className="steam-adventure">
                 <section className="section-block steam-chapter-panel">
-                  <h3>章节关卡</h3>
+                  <h3>关卡档案</h3>
                   {steamActiveChapter ? (
                     <>
                       <div className="steam-chapter-hero">
@@ -2493,7 +2523,7 @@ function App() {
                 </section>
 
                 <section className="section-block steam-quiz-panel">
-                  <h3>题目闯关</h3>
+                  <h3>战斗题目</h3>
                   {steamQuiz && steamActiveChapter ? (
                     <>
                       <p className="steam-quiz-prompt">{steamQuiz.prompt}</p>
@@ -2530,7 +2560,7 @@ function App() {
                 </section>
 
                 <section className="section-block steam-translation-panel">
-                  <h3>双语翻译卡</h3>
+                  <h3>双语卡片</h3>
                   {steamActiveChapter ? (
                     steamTranslationUnlocked ? (
                       <>
@@ -2564,227 +2594,63 @@ function App() {
             ) : null}
 
             {detailNode ? (
-              <>
-                <div className="pill-row">
-                  <span className="pill">{kindLabel(detailNode.kind)}</span>
-                  <span className="pill">{detailNode.category}</span>
-                  <span className="pill">{detailNode.sources.length} 个来源标记</span>
-                </div>
-
-                {isGlossaryView ? (
-                  <div className="glossary-reader">
-                    <section className="reader-block reader-summary">
-                      <div className="reader-head">
-                        <h3>摘要</h3>
-                        <span>卡片式概览</span>
-                      </div>
-                      {detailSummaryParts ? (
-                        <div className="summary-card">
-                          <article className="summary-mini-card summary-mini-card-main">
-                            <span className="summary-card-kicker">目录卡片</span>
-                            <strong>{detailSummaryParts.card}</strong>
-                            <p>{detailSummaryParts.oneLine}</p>
-                          </article>
-                          <div className="summary-mini-row">
-                            <article className="summary-mini-card summary-mini-card-tags">
-                              <span className="summary-card-kicker">自动标签</span>
-                              <div className="summary-tag-grid">
-                                {detailSummaryTags.length > 0 ? (
-                                  detailSummaryTags.map((tag) => (
-                                    <span key={tag} className="summary-tag-pill">
-                                      {tag}
-                                    </span>
-                                  ))
-                                ) : (
-                                  <span className="muted">暂无标签</span>
-                                )}
-                              </div>
-                            </article>
-                            <article className="summary-mini-card summary-mini-card-keywords">
-                              <span className="summary-card-kicker">关键词</span>
-                              <div className="summary-keyword-grid">
-                                {(detailSummaryParts.keywords.length > 0
-                                  ? detailSummaryParts.keywords
-                                  : uniqueList([...glossaryChildSections.map((node) => node.label), ...glossaryChildItems.map((node) => node.label)]).slice(0, 4)
-                                ).map((keyword) => (
-                                  <span key={keyword} className="summary-keyword-pill">
-                                    {keyword}
-                                  </span>
-                                ))}
-                              </div>
-                            </article>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="detail-summary">{detailNode.summary}</p>
-                      )}
-                    </section>
-
-                    <section className="reader-block reader-original">
-                      <div className="reader-head">
-                        <h3>原文</h3>
-                        <span>可点击跳转的原句</span>
-                      </div>
-                      <p className="detail-body">{detailParts.narrative || detailNode.detail}</p>
-                      {detailParts.citations.length > 0 ? renderCitationChips(detailParts.citations, detailNode) : null}
-                    </section>
-
-                    <section className="reader-block reader-anchors">
-                      <div className="reader-head">
-                        <h3>锚点</h3>
-                        <span>目录路径与来源定位</span>
-                      </div>
-                      <div className="section-block">
-                        <h3>目录路径</h3>
-                        {glossaryTrail.length === 0 ? (
-                          <p className="muted">没有找到可追溯的路径。</p>
-                        ) : (
-                          <div className="anchor-chip-row">
-                            {glossaryTrail.map((nodeId) => {
-                              const trailNode = glossaryIndex.nodesById.get(nodeId);
-                              if (!trailNode) {
-                                return null;
-                              }
-                              return (
-                                <button
-                                  key={trailNode.id}
-                                  type="button"
-                                  className="anchor-chip"
-                                  onClick={() => focusGlossaryNode(trailNode)}
-                                  onMouseEnter={(event) => showReferencePreview(trailNode, event.clientX, event.clientY)}
-                                  onMouseMove={(event) => updatePreviewPosition(event.clientX, event.clientY)}
-                                  onMouseLeave={() => setCitationPreview(null)}
-                                  onFocus={(event) => {
-                                    const rect = event.currentTarget.getBoundingClientRect();
-                                    showReferencePreview(trailNode, rect.left + rect.width / 2, rect.top + rect.height / 2);
-                                  }}
-                                  onBlur={() => setCitationPreview(null)}
-                                >
-                                  <span className="anchor-chip-kind">{kindLabel(trailNode.kind)}</span>
-                                  <strong>{trailNode.label}</strong>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="section-block">
-                        <h3>引用锚点</h3>
-                        {renderReferenceChips(detailNode.referenceIds, '引用锚点')}
-                      </div>
-                    </section>
-
-                    {glossaryChildSections.length > 0 ? (
-                      <div className="section-block">
-                        <h3>子章节</h3>
-                        <div className="relation-list">
-                          {glossaryChildSections.map((node) => (
-                            <button key={node.id} type="button" className="relation-chip" onClick={() => focusGlossaryNode(node)}>
-                              <strong>{node.label}</strong>
-                              <span>{kindLabel(node.kind)}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {glossaryChildItems.length > 0 ? (
-                      <div className="section-block">
-                        <h3>本节术语</h3>
-                        <div className="relation-list">
-                          {glossaryChildItems.map((node) => (
-                            <button key={node.id} type="button" className="relation-chip" onClick={() => focusGlossaryNode(node)}>
-                              <strong>{node.label}</strong>
-                              <span>{kindLabel(node.kind)}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <div className="section-block">
-                      <h3>来源文档</h3>
-                      <ul className="source-list">
-                        {detailNode.sources.map((source) => (
-                          <li key={source}>{source}</li>
-                        ))}
-                      </ul>
+              isSteamSkin ? (
+                <div className="steam-dossier">
+                  <div className="steam-dossier-hero">
+                    <div>
+                      <p className="steam-chapter-kicker">{detailNode.category}</p>
+                      <strong>{detailNode.label}</strong>
+                      <p>{detailParts.narrative || detailNode.summary}</p>
                     </div>
-
-                    <div className="section-block">
-                      <h3>操作</h3>
-                      <div className="actions-row">
-                        <button className="ghost-button" type="button" onClick={() => applyNodeMutation('delete')} disabled={busy}>
-                          删除知识点
-                        </button>
-                        <button className="ghost-button" type="button" onClick={() => applyNodeMutation('restore')} disabled={busy}>
-                          恢复知识点
-                        </button>
-                      </div>
+                    <div className="steam-dossier-actions">
+                      <span className="pill">{kindLabel(detailNode.kind)}</span>
+                      <span className="pill">{detailNode.sources.length} 个来源</span>
+                      <button className="ghost-button" type="button" onClick={() => setSteamScene('map')}>
+                        回到地图
+                      </button>
                     </div>
                   </div>
-                ) : (
-                  <>
-                    <p className="detail-summary">{detailNode.summary}</p>
-                    <p className="detail-body">{detailParts.narrative || detailNode.detail}</p>
-                    <div className="section-block">
-                      <h3>与它相连的知识</h3>
-                      <div className="relation-list">
-                        {relatedNodes.length === 0 ? (
-                          <p className="muted">当前没有可显示的关联节点。</p>
-                        ) : (
-                          relatedNodes.map((node) => {
-                            const edge = selectedEdges.find(
-                              (candidate) =>
-                                (candidate.source === selectedId && candidate.target === node.id) ||
-                                (candidate.target === selectedId && candidate.source === node.id),
-                            );
-                            return (
-                              <button
-                                key={node.id}
-                                type="button"
-                                className="relation-chip"
-                                onClick={() => setSelectedId(node.id)}
-                              >
-                                <strong>{node.label}</strong>
-                                <span>{edge ? relationLabel(edge.kind) : '关联'}</span>
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
 
-                    <div className="section-block">
-                      <h3>来源</h3>
-                      <ul className="source-list">
-                        {detailNode.sources.map((source) => (
-                          <li key={source}>{source}</li>
-                        ))}
-                      </ul>
-                    </div>
+                  <div className="section-block">
+                    <h3>战役概要</h3>
+                    <p className="steam-stage-copy">{detailParts.narrative || detailNode.detail}</p>
+                  </div>
 
-                    <div className="section-block">
-                      <h3>操作</h3>
-                      <div className="actions-row">
-                        <button className="ghost-button" type="button" onClick={() => applyNodeMutation('delete')} disabled={busy}>
-                          删除知识点
-                        </button>
-                        <button className="ghost-button" type="button" onClick={() => applyNodeMutation('restore')} disabled={busy}>
-                          恢复知识点
-                        </button>
-                      </div>
+                  <div className="section-block">
+                    <h3>引用锚点</h3>
+                    {detailNode.referenceIds.length > 0 ? renderReferenceChips(detailNode.referenceIds, '引用锚点') : <p className="muted">暂无引用锚点。</p>}
+                  </div>
+
+                  <div className="section-block">
+                    <h3>来源卷宗</h3>
+                    <ul className="source-list">
+                      {detailNode.sources.map((source) => (
+                        <li key={source}>{source}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="section-block">
+                    <h3>操作</h3>
+                    <div className="actions-row">
+                      <button className="ghost-button" type="button" onClick={() => applyNodeMutation('delete')} disabled={busy}>
+                        删除知识点
+                      </button>
+                      <button className="ghost-button" type="button" onClick={() => applyNodeMutation('restore')} disabled={busy}>
+                        恢复知识点
+                      </button>
                     </div>
-                  </>
-                )}
-              </>
+                  </div>
+                </div>
+              ) : (
+                <div className="section-block">
+                  <h3>知识详情</h3>
+                  <p className="detail-summary">{detailNode.summary}</p>
+                  <p className="detail-body">{detailParts.narrative || detailNode.detail}</p>
+                </div>
+              )
             ) : (
-              <p className="muted">
-                {isGlossaryView
-                  ? '点击左侧目录树里的章节或术语，右侧会显示路径、引用锚点和摘要。'
-                  : '点击图谱中的节点，右侧会显示详细解释。'}
-              </p>
+              <p className="muted">先在战役里点亮一个节点，这里会显示它的档案。</p>
             )}
           </section>
 
